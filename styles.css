@@ -325,3 +325,8 @@ body.admin #sheet.open { transform: translate(-50%, -50%); opacity: 1; pointer-e
 .linkbtn { color: var(--muted); font-size: 14px; text-decoration: underline; text-underline-offset: 3px; padding: 8px; justify-self: center; }
 .linkbtn:hover { color: var(--cream); }
 .qr-actions { display: flex; gap: 8px; }
+
+/* tarjetas del tablero: no desbordan la columna en pantallas angostas */
+.kcol, .callcol { min-width: 0; } .kcard, .ccard { min-width: 0; overflow-wrap: anywhere; }
+.k-foot { flex-wrap: wrap; } .k-head { flex-wrap: wrap; gap: 4px 10px; }
+@media (max-width: 1250px) { .live { grid-template-columns: 1fr; } }
