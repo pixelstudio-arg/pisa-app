@@ -18,6 +18,9 @@ const LS = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { toast('No se pudo guardar (almacenamiento lleno)'); } },
 };
 const K = { menu: 'pisa_menu', custom: 'pisa_custom', orders: 'pisa_orders', calls: 'pisa_calls' };
+// datos internos del local (stock, proveedores, pedidos a proveedores): solo los lee y escribe el dueño logueado
+const KP = { stock: 'pisa_stock', prov: 'pisa_prov', porders: 'pisa_porders' };
+const PRIV_KEYS = Object.values(KP);
 const CFG = typeof PISA_CONFIG !== 'undefined' ? PISA_CONFIG : {};
 
 // ───────────────────────── sincronización (Firebase Realtime Database, opcional)
@@ -36,7 +39,8 @@ async function initRemote() {
     await loadScript(v + 'firebase-auth-compat.js');
     const db = firebase.initializeApp(cfg).database();
     AUTH = firebase.auth();
-    AUTH.onAuthStateChanged(() => { authReady = true; if (isAdmin()) boot(); });
+    PRIV = db.ref('pisa_priv');
+    AUTH.onAuthStateChanged(u => { authReady = true; privSync(u); if (isAdmin()) boot(); });
     REMOTE = db.ref('pisa');
     Object.values(K).forEach(k => REMOTE.child(k).on('value', s => applyRemote(k, s.val())));
     db.ref('.info/connected').on('value', s => { online = !!s.val(); netState(); });
@@ -55,8 +59,14 @@ function applyRemote(k, val) {
   localStorage.setItem(k, nv);
   onExternalChange(k, ov, nv);
 }
+let PRIV = null, privOn = false;
+function privSync(u) { // los datos privados solo se descargan con sesión iniciada y se borran del equipo al salir
+  if (u && !privOn) { privOn = true; PRIV_KEYS.forEach(k => PRIV.child(k).on('value', s => applyRemote(k, s.val()), () => {})); }
+  else if (!u) { if (privOn) PRIV_KEYS.forEach(k => PRIV.child(k).off()); privOn = false; PRIV_KEYS.forEach(k => localStorage.removeItem(k)); }
+}
 function remotePut(k, id, val) {
-  if (REMOTE) REMOTE.child(k + '/' + id).set(val).catch(() => toast('No se pudo sincronizar. Revisá la conexión.'));
+  const ref = PRIV_KEYS.includes(k) ? PRIV : REMOTE;
+  if (ref) ref.child(k + '/' + id).set(val).catch(() => toast('No se pudo sincronizar. Revisá la conexión.'));
 }
 function saveRec(k, rec) {
   const a = LS.get(k, []), x = a.findIndex(r => r.id === rec.id);
@@ -502,6 +512,7 @@ function renderAdmin() {
         <button data-act="tab" data-tab="live">En vivo <b id="livecount"></b></button>
         <button data-act="tab" data-tab="carta">Carta</button>
         <button data-act="tab" data-tab="resumen">Resumen</button>
+        <button data-act="tab" data-tab="stock">Stock <b id="stockcount"></b></button>
         <button data-act="tab" data-tab="qr">Mesas y QR</button>
       </nav>
       <span id="netstate" class="net"></span>
@@ -517,7 +528,8 @@ function renderAdmMain() {
   $$('.adm-tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === admTab));
   const pend = getCalls().filter(c => c.status === 'pendiente').length + getOrders().filter(o => o.status === 'nuevo').length;
   const lc = $('#livecount'); lc.textContent = pend || ''; lc.hidden = !pend;
-  $('#adm-main').innerHTML = admTab === 'live' ? liveHTML() : admTab === 'carta' ? cartaHTML() : admTab === 'qr' ? qrHTML() : resumenHTML();
+  const low = lowStock().length, sc = $('#stockcount'); sc.textContent = low || ''; sc.hidden = !low; sc.title = low ? `${low} insumos por reponer` : '';
+  $('#adm-main').innerHTML = admTab === 'live' ? liveHTML() : admTab === 'carta' ? cartaHTML() : admTab === 'qr' ? qrHTML() : admTab === 'stock' ? stockHTML() : resumenHTML();
 }
 function qrHTML() {
   const base = location.origin + location.pathname, local = /^(localhost|127\.|\[::1\])/.test(location.hostname);
@@ -588,27 +600,377 @@ function cartaHTML() {
   </div>`;
 }
 
+// ───────────────────────── resumen: tablero de ventas por día / semana / mes / año
+// El "día" del local va de 6 a 6: lo que se vende pasada la medianoche cuenta para esa noche.
+const DAY = 864e5, SHIFT = 6 * 36e5;
+const MES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+const MESL = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+const DSEM = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+const PER = { dia: 'Día', semana: 'Semana', mes: 'Mes', anio: 'Año' };
+const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+const bday = ts => { const d = new Date(ts - SHIFT); d.setHours(0, 0, 0, 0); return d; };
+const kmoney = n => n >= 1e6 ? '$' + (n / 1e6).toLocaleString('es-AR', { maximumFractionDigits: 1 }) + ' M' : n >= 1e3 ? '$' + Math.round(n / 1e3) + ' k' : money(n);
+const niceMax = v => { if (v <= 0) return 1; const p = 10 ** Math.floor(Math.log10(v)), f = v / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p; };
+let dash = (() => { try { return { per: 'semana', off: 0, metric: 'ventas', demo: false, ...JSON.parse(sessionStorage.getItem('pisa_dash')) }; } catch { return { per: 'semana', off: 0, metric: 'ventas', demo: false }; } })();
+const saveDash = () => sessionStorage.setItem('pisa_dash', JSON.stringify(dash));
+
+function periodRange(per, off) {
+  const t = bday(Date.now()); let a, b;
+  if (per === 'dia') { a = new Date(t); a.setDate(a.getDate() + off); b = new Date(a); b.setDate(b.getDate() + 1); }
+  else if (per === 'semana') { a = new Date(t); a.setDate(a.getDate() - (a.getDay() + 6) % 7 + off * 7); b = new Date(a); b.setDate(b.getDate() + 7); }
+  else if (per === 'mes') { a = new Date(t.getFullYear(), t.getMonth() + off, 1); b = new Date(a.getFullYear(), a.getMonth() + 1, 1); }
+  else { a = new Date(t.getFullYear() + off, 0, 1); b = new Date(a.getFullYear() + 1, 0, 1); }
+  return { a, b, from: +a + SHIFT, to: +b + SHIFT };
+}
+function periodLabel(per, r, off) {
+  const a = r.a, e = new Date(+r.b - DAY);
+  if (per === 'dia') return off === 0 ? 'Hoy' : off === -1 ? 'Ayer' : `${cap(DSEM[a.getDay()])} ${a.getDate()} ${MES[a.getMonth()]}`;
+  if (per === 'semana') return off === 0 ? 'Esta semana' : off === -1 ? 'Semana pasada' : `${a.getDate()} ${MES[a.getMonth()]} – ${e.getDate()} ${MES[e.getMonth()]}`;
+  if (per === 'mes') return `${cap(MESL[a.getMonth()])} ${a.getFullYear()}`;
+  return String(a.getFullYear());
+}
+function periodSub(per, r) {
+  const a = r.a, e = new Date(+r.b - DAY);
+  if (per === 'dia') return `${DSEM[a.getDay()]} ${a.getDate()} de ${MESL[a.getMonth()]}`;
+  if (per === 'semana') return `del ${a.getDate()} ${MES[a.getMonth()]} al ${e.getDate()} ${MES[e.getMonth()]}`;
+  return '';
+}
+function buckets(per, r) {
+  const out = [];
+  if (per === 'dia') for (let h = 0; h < 24; h++) { const f = r.from + h * 36e5, hr = (h + 6) % 24; out.push({ f, t: f + 36e5, l: `${hr}:00 a ${(hr + 1) % 24}:00`, s: hr + 'h' }); }
+  else if (per === 'anio') for (let m = 0; m < 12; m++) { const a = new Date(r.a.getFullYear(), m, 1), b = new Date(r.a.getFullYear(), m + 1, 1); out.push({ f: +a + SHIFT, t: +b + SHIFT, l: `${cap(MESL[m])} ${a.getFullYear()}`, s: MES[m], dp: 'mes', dd: +a }); }
+  else for (let d = new Date(r.a); d < r.b; d.setDate(d.getDate() + 1)) { const nd = new Date(d); nd.setDate(nd.getDate() + 1); out.push({ f: +d + SHIFT, t: +nd + SHIFT, l: `${cap(DSEM[d.getDay()])} ${d.getDate()} de ${MESL[d.getMonth()]}`, s: per === 'semana' ? `${DSEM[d.getDay()]} ${d.getDate()}` : String(d.getDate()), dp: 'dia', dd: +d }); }
+  return out;
+}
+function offFor(per, ts) {
+  const t = bday(Date.now()), d = new Date(ts);
+  return per === 'dia' ? Math.round((d - t) / DAY) : (d.getFullYear() - t.getFullYear()) * 12 + d.getMonth() - t.getMonth();
+}
+function stats(os, cs) {
+  const ventas = os.reduce((s, o) => s + (o.total || 0), 0), at = cs.filter(c => c.tsDone);
+  return {
+    ventas, pedidos: os.length, ticket: os.length ? ventas / os.length : 0,
+    unidades: os.reduce((s, o) => s + o.items.reduce((a, l) => a + (l.qty || 0), 0), 0),
+    llamados: cs.length, resp: at.length ? at.reduce((s, c) => s + (c.tsDone - c.ts), 0) / at.length : 0,
+  };
+}
+function deltaHTML(cur, prev, lowerIsBetter) {
+  if (!prev) return cur ? '<em class="dl">sin datos para comparar</em>' : '<em class="dl">&nbsp;</em>';
+  const p = (cur - prev) / prev * 100, up = p >= 0, good = lowerIsBetter ? !up : up;
+  if (Math.abs(p) < 0.5) return '<em class="dl">igual que antes</em>';
+  return `<em class="dl ${good ? 'good' : 'bad'}">${up ? '▲' : '▼'} ${Math.abs(p).toLocaleString('es-AR', { maximumFractionDigits: Math.abs(p) < 10 ? 1 : 0 })}%</em>`;
+}
+const mins = ms => ms ? (ms < 60000 ? Math.round(ms / 1000) + ' s' : (ms / 60000).toLocaleString('es-AR', { maximumFractionDigits: 1 }) + ' min') : '—';
+
+// Datos de ejemplo: solo se generan en memoria para mostrar el tablero; nunca se guardan.
+let DEMO = null;
+function demoData() {
+  if (DEMO) return DEMO;
+  let seed = 917; const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+  const pool = MENU.filter(i => i.available && i.price > 0), w = pool.map(i => i.hot ? 4 : i.cat === 'sinalcohol' || i.cat === 'conalcohol' ? 3 : 1), tw = w.reduce((a, b) => a + b, 0);
+  const pick = () => { let x = rnd() * tw; for (let k = 0; k < pool.length; k++) { x -= w[k]; if (x <= 0) return pool[k]; } return pool[0]; };
+  const orders = [], calls = [], now = Date.now(), start = new Date(bday(now).getFullYear() - 1, 0, 1), span = (now - start) / DAY;
+  let n = 1000;
+  for (let d = new Date(start); +d <= now; d.setDate(d.getDate() + 1)) {
+    const wd = d.getDay(); if (wd === 1) continue; // lunes cerrado
+    const f = [1.3, 0, .75, .8, 1, 1.55, 1.75][wd] * (1 + .12 * Math.sin((d.getMonth() + 1) / 12 * 2 * Math.PI)) * (0.85 + (+d - +start) / DAY / span * .3);
+    const cnt = Math.round(26 * f * (.8 + rnd() * .4));
+    for (let k = 0; k < cnt; k++) {
+      const mn = 20 * 60 + Math.round((rnd() + rnd() + rnd()) / 3 * 300) - 20, ts = +d + mn * 60000;
+      if (ts > now) continue;
+      const items = []; for (let j = 0, L = 1 + Math.floor(rnd() * 3.5); j < L; j++) { const i = pick(); items.push({ id: i.id, name: i.name, qty: 1 + (rnd() < .25 ? 1 : 0), unit: i.price }); }
+      orders.push({ id: 'd' + n, n: n++, mesa: 1 + Math.floor(rnd() * PISA.tables), items, total: items.reduce((s, l) => s + l.qty * l.unit, 0), ts, status: 'entregado', paid: true });
+      if (rnd() < .45) calls.push({ id: 'dc' + n, mesa: 1, type: ['mozo', 'cuenta', 'cubiertos'][Math.floor(rnd() * 3)], ts: ts + 9e5, tsDone: ts + 9e5 + (40 + rnd() * 260) * 1000, status: 'atendido' });
+    }
+  }
+  return DEMO = { orders, calls };
+}
+const dOrders = () => dash.demo ? demoData().orders : getOrders();
+const dCalls = () => dash.demo ? demoData().calls : getCalls();
+
+function hbars(rows, fmt, empty) { // filas de barras horizontales: [nombre, valor, detalle]
+  if (!rows.length) return `<p class="k-empty">${empty}</p>`;
+  const max = Math.max(...rows.map(r => r[1])) || 1;
+  return `<div class="hbars">${rows.map(([n, v, d]) => `<div class="hb" title="${esc(n)}: ${esc(fmt(v))}${d ? ' · ' + esc(d) : ''}"><span>${esc(n)}</span><b>${fmt(v)}</b>${d ? `<small>${esc(d)}</small>` : ''}<i style="--w:${Math.max(3, v / max * 100)}%"></i></div>`).join('')}</div>`;
+}
+function colChart(bs, vals, fmt, tipFor, drill) { // gráfico de columnas con eje, tooltip y barras tocables
+  const max = niceMax(Math.max(...vals)), n = bs.length, step = n > 16 ? (n > 24 ? 3 : 2) : 1;
+  return `<div class="cchart" style="--n:${n}">
+    <div class="c-grid">${[1, .5, 0].map(g => `<span style="--y:${g * 100}%"><b>${fmt(max * g)}</b></span>`).join('')}</div>
+    <div class="c-cols">${bs.map((b, x) => {
+      const v = vals[x], h = v / max * 100, edge = x < Math.max(2, n * .2) ? 'el' : x >= Math.min(n - 2, n * .8) ? 'er' : '';
+      const tag = drill && b.dp ? `button data-act="drill" data-p="${b.dp}" data-d="${b.dd}"` : 'div tabindex="0"';
+      return `<${tag} class="col ${edge} ${v ? '' : 'zero'}" style="--h:${h}%" aria-label="${esc(b.l)}: ${esc(tipFor(x))}"><i></i><span class="tip"><b>${esc(b.l)}</b>${tipFor(x)}</span><em>${x % step === 0 ? esc(b.s) : ''}</em></${tag.split(' ')[0]}>`;
+    }).join('')}</div>
+  </div>`;
+}
+
 function resumenHTML() {
-  const orders = getOrders().filter(o => isToday(o.ts)), calls = getCalls().filter(c => isToday(c.ts));
-  const sales = orders.reduce((s, o) => s + o.total, 0);
-  const top = {}; orders.forEach(o => o.items.forEach(l => top[l.name] = (top[l.name] || 0) + l.qty));
-  const tops = Object.entries(top).sort((a, b) => b[1] - a[1]).slice(0, 6), max = tops[0]?.[1] || 1;
+  const per = dash.per, r = periodRange(per, dash.off), pr = periodRange(per, dash.off - 1);
+  const all = dOrders(), allc = dCalls();
+  const inR = (x, R) => x.ts >= R.from && x.ts < R.to;
+  const os = all.filter(o => inR(o, r)), cs = allc.filter(c => inR(c, r));
+  // el período en curso se compara con el anterior hasta el mismo momento (no contra el período completo)
+  if (dash.off === 0) pr.to = Math.min(pr.to, pr.from + (Date.now() - r.from));
+  const S = stats(os, cs), P = stats(all.filter(o => inR(o, pr)), allc.filter(c => inR(c, pr)));
+  const vs = (dash.off === 0 ? { dia: 'vs. ayer a esta hora', semana: 'vs. semana pasada a esta altura', mes: 'vs. mes pasado a esta altura', anio: 'vs. año pasado a esta altura' } : { dia: 'vs. día anterior', semana: 'vs. semana anterior', mes: 'vs. mes anterior', anio: 'vs. año anterior' })[per];
+
+  // gráfico principal
+  let bs = buckets(per, r);
+  const agg = bs.map(b => { const l = os.filter(o => o.ts >= b.f && o.ts < b.t); return { v: l.reduce((s, o) => s + o.total, 0), n: l.length }; });
+  let lo = 0, hi = bs.length - 1;
+  if (per === 'dia') { // solo el horario con movimiento (mínimo 19 a 1 h)
+    const used = agg.map((a, x) => a.n ? x : -1).filter(x => x >= 0);
+    lo = Math.min(13, used[0] ?? 13); hi = Math.max(19, used[used.length - 1] ?? 19);
+  }
+  bs = bs.slice(lo, hi + 1); const ag = agg.slice(lo, hi + 1);
+  const isV = dash.metric === 'ventas', vals = ag.map(a => isV ? a.v : a.n);
+  const chart = os.length ? colChart(bs, vals, isV ? kmoney : v => String(Math.round(v)), x => `${money(ag[x].v)} · ${ag[x].n} ${ag[x].n === 1 ? 'pedido' : 'pedidos'}`, per !== 'dia')
+    : `<div class="c-empty"><p>No hay ventas registradas en este período.</p>${dash.demo ? '' : '<button class="btn ghost sm" data-act="dash-demo">Ver con datos de ejemplo</button>'}</div>`;
+
+  // productos, categorías, horas y mesas
+  const prod = {}, cat = {}, hrs = {}, mesas = {};
+  os.forEach(o => {
+    const h = new Date(o.ts).getHours(); hrs[h] = (hrs[h] || 0) + 1;
+    mesas[o.mesa] = (mesas[o.mesa] || 0) + o.total;
+    o.items.forEach(l => {
+      const p = prod[l.name] || (prod[l.name] = { q: 0, v: 0 }); p.q += l.qty; p.v += l.qty * (l.unit || 0);
+      const it = byId(l.id), c = CATS.find(c => c.id === (it && it.cat)); const cn = c ? c.name : 'Otros';
+      cat[cn] = (cat[cn] || 0) + l.qty * (l.unit || 0);
+    });
+  });
+  const tops = Object.entries(prod).sort((a, b) => b[1].q - a[1].q).slice(0, 8).map(([n, p]) => [n, p.q, money(p.v)]);
+  const ctot = Object.values(cat).reduce((a, b) => a + b, 0) || 1;
+  const cats = Object.entries(cat).sort((a, b) => b[1] - a[1]).map(([n, v]) => [n, v, Math.round(v / ctot * 100) + '% de lo vendido']);
+  const hours = [18, 19, 20, 21, 22, 23, 0, 1, 2].map(h => ({ f: 0, t: 0, l: `${h}:00 a ${(h + 1) % 24}:00`, s: h + 'h', n: hrs[h] || 0 }));
+  const mrows = Object.entries(mesas).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([m, v]) => ['Mesa ' + m, v, '']);
+
+  // frases para leer rápido
+  const ins = [];
+  if (os.length) {
+    if (per !== 'dia') { const bx = ag.reduce((b, a, x) => a.v > ag[b].v ? x : b, 0); ins.push(['Mejor ' + (per === 'anio' ? 'mes' : 'día'), bs[bx].l, money(ag[bx].v)]); }
+    const ph = Object.entries(hrs).sort((a, b) => b[1] - a[1])[0]; ins.push(['Hora pico', `${ph[0]}:00 a ${(+ph[0] + 1) % 24}:00`, `${ph[1].toLocaleString('es-AR')} pedidos`]);
+    if (tops[0]) ins.push(['Producto estrella', tops[0][0], `${tops[0][1].toLocaleString('es-AR')} vendidos`]);
+  }
+
   const open = getOrders().filter(o => !o.paid);
-  return `<div class="resumen">
-    <div class="kpis">
-      <div class="kpi"><span>Ventas de hoy</span><strong>${money(sales)}</strong></div>
-      <div class="kpi"><span>Pedidos</span><strong>${orders.length}</strong></div>
-      <div class="kpi"><span>Ticket promedio</span><strong>${money(orders.length ? sales / orders.length : 0)}</strong></div>
-      <div class="kpi"><span>Llamados de mesa</span><strong>${calls.length}</strong></div>
+  const kpi = (lab, val, d, hint) => `<div class="kpi"><span>${lab}</span><strong>${val}</strong>${d}${hint ? `<small>${hint}</small>` : ''}</div>`;
+  return `<div class="dash">
+    <div class="dash-bar">
+      <div class="seg" role="tablist">${Object.entries(PER).map(([k, l]) => `<button data-act="dash-per" data-p="${k}" class="${k === per ? 'on' : ''}" role="tab" aria-selected="${k === per}">${l}</button>`).join('')}</div>
+      <div class="dnav">
+        <button class="ibtn" data-act="dash-off" data-d="-1" aria-label="Período anterior">‹</button>
+        <div><strong>${periodLabel(per, r, dash.off)}</strong><small>${periodSub(per, r)}</small></div>
+        <button class="ibtn" data-act="dash-off" data-d="1" aria-label="Período siguiente" ${dash.off >= 0 ? 'disabled' : ''}>›</button>
+        ${dash.off ? '<button class="btn ghost sm" data-act="dash-now">Volver a hoy</button>' : ''}
+      </div>
+      <div class="dash-tools">
+        <label class="switch"><input type="checkbox" id="dash-demo" ${dash.demo ? 'checked' : ''}><i></i><span>Datos de ejemplo</span></label>
+        <button class="btn ghost sm" data-act="dash-csv" ${os.length ? '' : 'disabled'}>Descargar planilla</button>
+      </div>
+    </div>
+    ${dash.demo ? '<p class="demo-note">Estás viendo <b>datos de ejemplo</b> para mostrar cómo funciona el tablero. No son ventas reales. Apagá el interruptor para ver las tuyas.</p>' : ''}
+    <div class="kpis k6">
+      ${kpi('Ventas', money(S.ventas), deltaHTML(S.ventas, P.ventas), vs)}
+      ${kpi('Pedidos', S.pedidos.toLocaleString('es-AR'), deltaHTML(S.pedidos, P.pedidos), vs)}
+      ${kpi('Ticket promedio', money(S.ticket), deltaHTML(S.ticket, P.ticket), 'por pedido')}
+      ${kpi('Productos vendidos', S.unidades.toLocaleString('es-AR'), deltaHTML(S.unidades, P.unidades), vs)}
+      ${kpi('Llamados al mozo', S.llamados.toLocaleString('es-AR'), deltaHTML(S.llamados, P.llamados, true), 'menos es mejor')}
+      ${kpi('Tiempo de respuesta', mins(S.resp), deltaHTML(S.resp, P.resp, true), 'promedio para atender un llamado')}
+    </div>
+    ${ins.length ? `<div class="insights">${ins.map(([a, b, c]) => `<div><span>${a}</span><strong>${esc(b)}</strong><small>${esc(c)}</small></div>`).join('')}</div>` : ''}
+    <div class="panel chart-panel">
+      <header><h3>${isV ? 'Ventas' : 'Pedidos'} ${{ dia: 'por hora', semana: 'por día', mes: 'por día', anio: 'por mes' }[per]}</h3>
+        <div class="seg sm"><button data-act="dash-metric" data-m="ventas" class="${isV ? 'on' : ''}">Ventas</button><button data-act="dash-metric" data-m="pedidos" class="${isV ? '' : 'on'}">Pedidos</button></div></header>
+      ${chart}
+      ${os.length && per !== 'dia' ? `<p class="hint">Tocá una barra para ver ese ${per === 'anio' ? 'mes' : 'día'} en detalle.</p>` : ''}
+    </div>
+    <div class="grid3">
+      <div class="panel"><h3>Lo más vendido</h3>${hbars(tops, v => v.toLocaleString('es-AR') + ' u.', 'Sin ventas en este período')}</div>
+      <div class="panel"><h3>Ventas por categoría</h3>${hbars(cats, kmoney, 'Sin ventas en este período')}</div>
+      <div class="panel"><h3>Horarios con más pedidos</h3>${os.length ? colChart(hours, hours.map(h => h.n), v => String(Math.round(v)), x => `${hours[x].n} pedidos`, false) : '<p class="k-empty">Sin ventas en este período</p>'}</div>
     </div>
     <div class="two">
-      <div class="panel"><h3>Lo más pedido hoy</h3>${tops.length ? tops.map(([n, v]) => `<div class="bar"><span>${esc(n)}</span><i style="width:${Math.max(8, v / max * 100)}%"></i><b>${v}</b></div>`).join('') : '<p class="k-empty">Todavía no hay pedidos hoy</p>'}</div>
-      <div class="panel"><h3>Salón</h3><div class="mesas">${Array.from({ length: PISA.tables }, (_, x) => {
-        const m = x + 1, os = open.filter(o => o.mesa === m), t = os.reduce((s, o) => s + o.total, 0);
-        return `<div class="mesa ${os.length ? 'busy' : ''}"><strong>${m}</strong>${os.length ? `<span>${money(t)}</span><button class="btn ghost sm" data-act="close-mesa" data-m="${m}">Cobrar y cerrar</button>` : '<span>Libre</span>'}</div>`;
+      <div class="panel"><h3>Mesas que más facturan</h3>${hbars(mrows, kmoney, 'Sin ventas en este período')}</div>
+      <div class="panel"><h3>Salón ahora</h3><div class="mesas">${Array.from({ length: PISA.tables }, (_, x) => {
+        const m = x + 1, ms = open.filter(o => o.mesa === m), t = ms.reduce((s, o) => s + o.total, 0);
+        return `<div class="mesa ${ms.length ? 'busy' : ''}"><strong>${m}</strong>${ms.length ? `<span>${money(t)}</span><button class="btn ghost sm" data-act="close-mesa" data-m="${m}">Cobrar y cerrar</button>` : '<span>Libre</span>'}</div>`;
       }).join('')}</div></div>
     </div>
   </div>`;
+}
+function dashCSV() {
+  const r = periodRange(dash.per, dash.off), os = dOrders().filter(o => o.ts >= r.from && o.ts < r.to);
+  const q = s => `"${String(s).replace(/"/g, '""')}"`;
+  const rows = [['Fecha', 'Hora', 'Mesa', 'Pedido', 'Productos', 'Total'].join(';'), ...os.map(o => { const d = new Date(o.ts); return [d.toLocaleDateString('es-AR'), hhmm(o.ts), o.mesa, o.n, q(o.items.map(l => `${l.qty}x ${l.name}`).join(', ')), Math.round(o.total)].join(';'); })];
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['﻿' + rows.join('\r\n')], { type: 'text/csv;charset=utf-8' }));
+  a.download = `pisa-ventas-${periodLabel(dash.per, r, dash.off).toLowerCase().replace(/[^a-z0-9áéíóúñ]+/g, '-')}.csv`; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  toast('Planilla descargada (se abre con Excel)', 'ok');
+}
+
+// ───────────────────────── stock, proveedores y pedidos a proveedores
+const UNITS = ['kg', 'g', 'l', 'u', 'paquete', 'caja', 'atado', 'docena'];
+const SCATS = ['Harinas y masa', 'Quesos', 'Fiambres y carnes', 'Verduras', 'Salsas y conservas', 'Bebidas', 'Descartables', 'Limpieza', 'Otros'];
+const getStock = () => LS.get(KP.stock, []), getProv = () => LS.get(KP.prov, []), getPO = () => LS.get(KP.porders, []);
+const lvl = s => (+s.qty || 0) <= 0 ? 'out' : (+s.qty || 0) <= (+s.min || 0) ? 'low' : 'ok';
+const lowStock = () => getStock().filter(s => lvl(s) !== 'ok');
+const qfmt = v => (+v || 0).toLocaleString('es-AR', { maximumFractionDigits: 2 });
+const provName = id => (getProv().find(p => p.id === id) || {}).name || '';
+const suggest = s => Math.max(0, Math.ceil((+s.min || 0) * 2 - (+s.qty || 0)));
+const waNum = ph => { let d = String(ph || '').replace(/\D/g, ''); if (!d) return ''; d = d.replace(/^0+/, ''); if (!d.startsWith('54')) d = '549' + d; return d; };
+let stk = { view: sessionStorage.getItem('pisa_stk') || 'inv', q: '', cat: '', low: false }, PO = null;
+const STOCK_SEED = [
+  ['Harina 0000', 'Harinas y masa', 'kg', 40, 20], ['Levadura fresca', 'Harinas y masa', 'kg', 2, 1], ['Sal fina', 'Harinas y masa', 'kg', 5, 2],
+  ['Mozzarella', 'Quesos', 'kg', 18, 10], ['Parmesano', 'Quesos', 'kg', 3, 1.5], ['Provolone', 'Quesos', 'kg', 2, 1], ['Roquefort', 'Quesos', 'kg', 1, 1],
+  ['Jamón cocido', 'Fiambres y carnes', 'kg', 4, 2], ['Salame', 'Fiambres y carnes', 'kg', 2, 1], ['Panceta', 'Fiambres y carnes', 'kg', 1.5, 1],
+  ['Cebolla', 'Verduras', 'kg', 10, 5], ['Morrón', 'Verduras', 'kg', 3, 2], ['Albahaca', 'Verduras', 'atado', 4, 3], ['Rúcula', 'Verduras', 'atado', 2, 4],
+  ['Tomate triturado', 'Salsas y conservas', 'kg', 24, 12], ['Aceite de oliva', 'Salsas y conservas', 'l', 6, 3], ['Aceitunas', 'Salsas y conservas', 'kg', 2, 1],
+  ['Gaseosas', 'Bebidas', 'u', 48, 24], ['Agua mineral', 'Bebidas', 'u', 30, 24], ['Cerveza', 'Bebidas', 'u', 36, 24],
+  ['Cajas de pizza', 'Descartables', 'u', 80, 100], ['Servilletas', 'Descartables', 'paquete', 10, 5], ['Detergente', 'Limpieza', 'l', 5, 2],
+];
+
+function stockHTML() {
+  const views = [['inv', 'Inventario'], ['prov', 'Proveedores'], ['ped', 'Pedidos']];
+  const pend = getPO().filter(p => p.status !== 'recibido').length;
+  return `<div class="stk">
+    <div class="seg stk-views">${views.map(([k, l]) => `<button data-act="s-view" data-v="${k}" class="${stk.view === k ? 'on' : ''}">${l}${k === 'ped' && pend ? ` <b>${pend}</b>` : ''}</button>`).join('')}</div>
+    ${stk.view === 'prov' ? provHTML() : stk.view === 'ped' ? pedHTML() : invHTML()}
+  </div>`;
+}
+function invHTML() {
+  const all = getStock();
+  if (!all.length) return `<div class="s-empty"><img src="img/logo.jpg" alt=""><h3>Todavía no cargaste insumos</h3>
+    <p>Anotá lo que usás en la cocina (harina, muzzarella, bebidas…) con la cantidad que tenés y el mínimo que no querés que falte. La app te avisa cuando algo se está terminando.</p>
+    <div class="s-empty-btns"><button class="btn primary" data-act="s-seed">Empezar con una lista típica de pizzería</button><button class="btn ghost" data-act="s-new">Cargar uno por uno</button></div></div>`;
+  const q = stk.q.trim().toLowerCase();
+  const list = all.filter(s => (!stk.cat || s.cat === stk.cat) && (!stk.low || lvl(s) !== 'ok') && (!q || s.name.toLowerCase().includes(q)))
+    .sort((a, b) => ({ out: 0, low: 1, ok: 2 })[lvl(a)] - ({ out: 0, low: 1, ok: 2 })[lvl(b)] || a.name.localeCompare(b.name));
+  const low = all.filter(s => lvl(s) === 'low').length, out = all.filter(s => lvl(s) === 'out').length;
+  const val = all.reduce((t, s) => t + (+s.qty || 0) * (+s.cost || 0), 0);
+  const cats = SCATS.filter(c => all.some(s => s.cat === c));
+  return `<div class="kpis">
+      <button class="kpi kbtn ${!stk.low ? 'on' : ''}" data-act="s-low" data-v="0"><span>Insumos cargados</span><strong>${all.length}</strong><small>Ver todos</small></button>
+      <button class="kpi kbtn warnk ${stk.low ? 'on' : ''}" data-act="s-low" data-v="1"><span>Por reponer</span><strong>${low + out}</strong><small>${out ? `${out} sin stock · ` : ''}tocá para ver</small></button>
+      <div class="kpi"><span>Pedidos en camino</span><strong>${getPO().filter(p => p.status === 'enviado').length}</strong><small>enviados a proveedores</small></div>
+      <div class="kpi"><span>Valor del stock</span><strong>${val ? kmoney(val) : '—'}</strong><small>${val ? 'según el costo cargado' : 'cargá el costo de cada insumo'}</small></div>
+    </div>
+    <div class="carta-bar">
+      <label class="search">${ICON.search}<input id="stk-q" type="search" placeholder="Buscar insumo…" value="${esc(stk.q)}"></label>
+      <select id="stk-cat" class="select sm" aria-label="Filtrar por categoría"><option value="">Todas las categorías</option>${cats.map(c => `<option ${c === stk.cat ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
+      <span class="grow"></span>
+      ${low + out ? '<button class="btn ghost sm" data-act="po-auto">Armar pedidos de lo que falta</button>' : ''}
+      <button class="btn primary sm" data-act="s-new">+ Insumo</button>
+    </div>
+    <div class="rows srows">${list.map(s => {
+      const l = lvl(s), pct = Math.min(100, (+s.qty || 0) / Math.max(+s.min || 1, .01) / 2 * 100), stepv = s.unit === 'g' ? 100 : 1;
+      return `<div class="srow ${l}">
+        <div class="s-name"><strong>${esc(s.name)}</strong><span>${esc(s.cat)}${s.prov && provName(s.prov) ? ' · ' + esc(provName(s.prov)) : ''}</span></div>
+        <div class="s-qty"><button data-act="s-step" data-id="${s.id}" data-d="-${stepv}" aria-label="Restar">−</button><input type="number" min="0" step="any" inputmode="decimal" value="${+s.qty || 0}" data-sq="${s.id}" aria-label="Cantidad de ${esc(s.name)}"><button data-act="s-step" data-id="${s.id}" data-d="${stepv}" aria-label="Sumar">+</button><span>${esc(s.unit)}</span></div>
+        <div class="s-lvl"><i style="--w:${pct}%"></i><small>Mínimo ${qfmt(s.min)} ${esc(s.unit)}</small></div>
+        <span class="pill ${l}">${{ ok: 'Bien', low: 'Queda poco', out: 'Sin stock' }[l]}</span>
+        <button class="btn ghost sm" data-act="s-edit" data-id="${s.id}">Editar</button>
+      </div>`;
+    }).join('') || '<p class="k-empty">No hay insumos con ese filtro.</p>'}</div>`;
+}
+function provHTML() {
+  const ps = getProv(), st = getStock();
+  return `<div class="carta-bar"><p class="hint">Tus proveedores con su WhatsApp. Desde acá les mandás el pedido armado con un toque.</p><span class="grow"></span><button class="btn primary sm" data-act="p-new">+ Proveedor</button></div>
+    ${ps.length ? `<div class="pgrid">${ps.map(p => {
+      const its = st.filter(s => s.prov === p.id), lo = its.filter(s => lvl(s) !== 'ok').length, wa = waNum(p.phone);
+      return `<div class="pcard">
+        <div class="p-head"><strong>${esc(p.name)}</strong>${p.rubro ? `<span>${esc(p.rubro)}</span>` : ''}</div>
+        <p class="p-meta">${its.length} insumos${lo ? ` · <b>${lo} por reponer</b>` : ''}${p.days ? `<br>Entrega: ${esc(p.days)}` : ''}${p.phone ? `<br>${esc(p.phone)}` : ''}</p>
+        <div class="p-actions">
+          <button class="btn primary sm" data-act="po-new" data-p="${p.id}">Hacer pedido</button>
+          ${wa ? `<a class="btn ghost sm" href="https://wa.me/${wa}" target="_blank" rel="noopener">WhatsApp</a><a class="btn ghost sm" href="tel:${esc(String(p.phone).replace(/[^\d+]/g, ''))}">Llamar</a>` : ''}
+          <button class="btn ghost sm" data-act="p-edit" data-id="${p.id}">Editar</button>
+        </div>
+      </div>`;
+    }).join('')}</div>` : '<div class="s-empty"><h3>Sin proveedores todavía</h3><p>Cargá a quién le comprás cada cosa (nombre y WhatsApp). Después, en cada insumo elegís su proveedor y la app arma los pedidos sola.</p><button class="btn primary" data-act="p-new">Cargar el primero</button></div>'}`;
+}
+function poTotal(p) { const st = getStock(); return p.lines.reduce((t, l) => t + l.qty * (+(st.find(s => s.id === l.sid) || {}).cost || 0), 0); }
+function poCard(p) {
+  const pv = getProv().find(x => x.id === p.prov), t = poTotal(p);
+  const when = p.status === 'recibido' ? 'Recibido ' + new Date(p.tsRec).toLocaleDateString('es-AR') : p.status === 'enviado' ? 'Enviado ' + new Date(p.tsSent).toLocaleDateString('es-AR') : 'Creado ' + new Date(p.ts).toLocaleDateString('es-AR');
+  return `<div class="kcard po ${p.status}">
+    <div class="k-head"><strong>${esc(pv ? pv.name : 'Proveedor borrado')}</strong><span>${when}</span></div>
+    <ul>${p.lines.map(l => `<li><b>${qfmt(l.qty)} ${esc(l.unit)}</b> ${esc(l.name)}</li>`).join('')}</ul>
+    ${p.note ? `<p class="k-note">Nota: ${esc(p.note)}</p>` : ''}
+    <div class="k-foot"><span>${t ? '≈ ' + money(t) : ''}</span><span class="po-btns">
+      ${p.status === 'borrador' ? `<button class="btn ghost sm" data-act="po-edit" data-id="${p.id}">Editar</button><button class="btn primary sm" data-act="po-send" data-id="${p.id}">Enviar por WhatsApp</button>` : ''}
+      ${p.status === 'enviado' ? `<button class="btn ghost sm" data-act="po-send" data-id="${p.id}">Reenviar</button><button class="btn primary sm" data-act="po-rec" data-id="${p.id}">Llegó: sumar al stock</button>` : ''}
+      ${p.status !== 'recibido' ? `<button class="btn ghost sm" data-act="po-del" data-id="${p.id}" aria-label="Borrar pedido">Borrar</button>` : ''}
+    </span></div>
+  </div>`;
+}
+function pedHTML() {
+  const ps = getPO().slice().sort((a, b) => b.ts - a.ts);
+  const col = (s, title, lim) => { const l = ps.filter(p => p.status === s).slice(0, lim || 99); return `<div class="kcol"><h3>${title}<b>${ps.filter(p => p.status === s).length}</b></h3>${l.map(poCard).join('') || '<p class="k-empty">Nada por acá</p>'}</div>`; };
+  return `<div class="carta-bar"><p class="hint">Armá el pedido, mandalo por WhatsApp y cuando llegue tocá “Llegó”: se suma solo al stock.</p><span class="grow"></span>
+      ${lowStock().length ? '<button class="btn ghost sm" data-act="po-auto">Armar pedidos de lo que falta</button>' : ''}
+      <button class="btn primary sm" data-act="po-new">+ Pedido</button></div>
+    <div class="kanban">${col('borrador', 'Por enviar')}${col('enviado', 'En camino')}${col('recibido', 'Recibidos', 12)}</div>`;
+}
+function stockForm(s) {
+  const ps = getProv();
+  return `<div class="pad form"><h2 class="sh-title">${s ? 'Editar insumo' : 'Nuevo insumo'}</h2>
+    <label>Nombre<input id="sf-name" maxlength="60" value="${s ? esc(s.name) : ''}" placeholder="Ej.: Mozzarella"></label>
+    <div class="frow"><label>Categoría<select id="sf-cat" class="select">${SCATS.map(c => `<option ${s && s.cat === c ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
+    <label>Unidad<select id="sf-unit" class="select">${UNITS.map(u => `<option ${s && s.unit === u ? 'selected' : ''}>${u}</option>`).join('')}</select></label></div>
+    <div class="frow"><label>Cantidad que hay<input id="sf-qty" type="number" min="0" step="any" inputmode="decimal" value="${s ? +s.qty || 0 : ''}"></label>
+    <label>Avisarme cuando quede<input id="sf-min" type="number" min="0" step="any" inputmode="decimal" value="${s ? +s.min || 0 : ''}"></label></div>
+    <div class="frow"><label>Costo por unidad ($)<input id="sf-cost" type="number" min="0" step="any" inputmode="decimal" value="${s && s.cost ? s.cost : ''}" placeholder="Opcional"></label>
+    <label>Proveedor<select id="sf-prov" class="select"><option value="">Sin asignar</option>${ps.map(p => `<option value="${p.id}" ${s && s.prov === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label></div>
+    ${ps.length ? '' : '<p class="hint">Todavía no cargaste proveedores: lo podés asignar después.</p>'}
+    <button class="btn primary block" data-act="s-save" ${s ? `data-id="${s.id}"` : ''}>Guardar</button>
+    ${s ? `<button class="linkbtn" data-act="s-del" data-id="${s.id}">Borrar este insumo</button>` : ''}
+  </div>`;
+}
+function provForm(p) {
+  return `<div class="pad form"><h2 class="sh-title">${p ? 'Editar proveedor' : 'Nuevo proveedor'}</h2>
+    <label>Nombre<input id="pf-name" maxlength="60" value="${p ? esc(p.name) : ''}" placeholder="Ej.: Lácteos del Centro"></label>
+    <label>Qué te vende<input id="pf-rubro" maxlength="60" value="${p ? esc(p.rubro || '') : ''}" placeholder="Ej.: quesos y fiambres"></label>
+    <label>WhatsApp o teléfono<input id="pf-phone" type="tel" maxlength="30" value="${p ? esc(p.phone || '') : ''}" placeholder="Con característica, ej.: 351 555 1234"></label>
+    <label>Días de entrega<input id="pf-days" maxlength="60" value="${p ? esc(p.days || '') : ''}" placeholder="Ej.: martes y viernes a la mañana"></label>
+    <button class="btn primary block" data-act="p-save" ${p ? `data-id="${p.id}"` : ''}>Guardar</button>
+    ${p ? `<button class="linkbtn" data-act="p-del" data-id="${p.id}">Borrar este proveedor</button>` : ''}
+  </div>`;
+}
+function poForm() {
+  const ps = getProv(), st = getStock(), pv = ps.find(p => p.id === PO.prov);
+  const list = st.filter(s => PO.all || s.prov === PO.prov || PO.q[s.id] > 0).sort((a, b) => ({ out: 0, low: 1, ok: 2 })[lvl(a)] - ({ out: 0, low: 1, ok: 2 })[lvl(b)] || a.name.localeCompare(b.name));
+  return `<div class="pad form"><h2 class="sh-title">Pedido a proveedor</h2>
+    ${ps.length ? `<label>Proveedor<select id="po-prov" class="select">${ps.map(p => `<option value="${p.id}" ${p.id === PO.prov ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>` : '<p class="warn">Primero cargá un proveedor en la pestaña Proveedores.</p>'}
+    <div class="po-lines">${list.length ? list.map(s => `<label class="po-line ${lvl(s)}"><span><strong>${esc(s.name)}</strong><small>Hay ${qfmt(s.qty)} ${esc(s.unit)} · mínimo ${qfmt(s.min)}</small></span>
+      <span class="po-q"><input type="number" min="0" step="any" inputmode="decimal" data-poq="${s.id}" value="${PO.q[s.id] || ''}" placeholder="0"><em>${esc(s.unit)}</em></span></label>`).join('')
+      : `<p class="hint">${pv ? 'Este proveedor todavía no tiene insumos asignados.' : ''} Tocá “Ver todos los insumos” para elegir.</p>`}</div>
+    <button class="linkbtn" data-act="po-all">${PO.all ? 'Ver solo los de este proveedor' : 'Ver todos los insumos'}</button>
+    <label>Nota para el proveedor<textarea id="po-note" rows="2" maxlength="200" placeholder="Opcional">${esc(PO.note || '')}</textarea></label>
+    <div class="po-actions"><button class="btn ghost block" data-act="po-save">Guardar para después</button><button class="btn primary block" data-act="po-save" data-send="1">Enviar por WhatsApp</button></div>
+  </div>`;
+}
+function poRead() { // vuelca el formulario abierto al pedido en edición
+  const p = $('#po-prov'); if (p) PO.prov = p.value;
+  $$('[data-poq]').forEach(i => { const v = Math.max(0, +i.value || 0); if (v) PO.q[i.dataset.poq] = v; else delete PO.q[i.dataset.poq]; });
+  const n = $('#po-note'); if (n) PO.note = n.value.trim();
+}
+function poOpen(prov, q = {}, id = null) {
+  const ps = getProv(); PO = { id, prov: prov || (ps[0] && ps[0].id) || '', q, note: '', all: false };
+  if (!id) getStock().filter(s => s.prov === PO.prov && lvl(s) !== 'ok' && !(s.id in PO.q)).forEach(s => { if (suggest(s)) PO.q[s.id] = suggest(s); });
+  openSheet('po', poForm(), 'modal');
+}
+function poMessage(p) {
+  const pv = getProv().find(x => x.id === p.prov) || {};
+  return `Hola${pv.name ? ' ' + pv.name : ''}, te escribo de Pisa (${PISA.address || 'Lima 917'}). Te quería hacer este pedido:\n\n${p.lines.map(l => `• ${qfmt(l.qty)} ${l.unit} de ${l.name}`).join('\n')}${p.note ? `\n\nNota: ${p.note}` : ''}\n\n¡Muchas gracias!`;
+}
+function poSend(p) {
+  const pv = getProv().find(x => x.id === p.prov), wa = pv && waNum(pv.phone);
+  if (!wa) { toast('Cargá el WhatsApp del proveedor para enviarle el pedido'); return false; }
+  window.open(`https://wa.me/${wa}?text=${encodeURIComponent(poMessage(p))}`, '_blank', 'noopener');
+  saveRec(KP.porders, { ...p, status: 'enviado', tsSent: Date.now() });
+  return true;
 }
 
 function setOverride(id, patch) {
@@ -743,6 +1105,76 @@ const ACT = {
     MENU = getMenu(); closeSheet(); renderAdmMain(); toast('Producto creado', 'ok');
   },
   'del-item': t => { if (!confirm('¿Eliminar este producto?')) return; delRec(K.custom, t.dataset.id); MENU = getMenu(); renderAdmMain(); },
+
+  // tablero
+  'dash-per': t => { dash.per = t.dataset.p; dash.off = 0; saveDash(); renderAdmMain(); },
+  'dash-off': t => { dash.off = Math.min(0, dash.off + +t.dataset.d); saveDash(); renderAdmMain(); },
+  'dash-now': () => { dash.off = 0; saveDash(); renderAdmMain(); },
+  'dash-metric': t => { dash.metric = t.dataset.m; saveDash(); renderAdmMain(); },
+  'dash-demo': () => { dash.demo = true; saveDash(); renderAdmMain(); },
+  'dash-csv': dashCSV,
+  drill: t => { dash.per = t.dataset.p; dash.off = offFor(dash.per, +t.dataset.d); saveDash(); renderAdmMain(); window.scrollTo({ top: 0, behavior: 'smooth' }); },
+
+  // stock
+  's-view': t => { stk.view = t.dataset.v; sessionStorage.setItem('pisa_stk', stk.view); renderAdmMain(); },
+  's-low': t => { stk.low = t.dataset.v === '1'; renderAdmMain(); },
+  's-seed': () => { const now = Date.now(); STOCK_SEED.forEach(([name, cat, unit, qty, min], x) => saveRec(KP.stock, { id: 's-' + uid(), ts: now + x, name, cat, unit, qty, min, cost: 0, prov: '' })); renderAdmMain(); toast('Lista cargada: ajustá las cantidades reales', 'ok'); },
+  's-new': () => openSheet('stk', stockForm(null), 'modal'),
+  's-edit': t => openSheet('stk', stockForm(getStock().find(s => s.id === t.dataset.id)), 'modal'),
+  's-step': t => { const s = getStock().find(x => x.id === t.dataset.id); if (!s) return; s.qty = Math.max(0, Math.round(((+s.qty || 0) + +t.dataset.d) * 100) / 100); saveRec(KP.stock, s); renderAdmMain(); },
+  's-save': t => {
+    const name = $('#sf-name').value.trim(); if (!name) return toast('Poné el nombre del insumo');
+    const old = t.dataset.id ? getStock().find(s => s.id === t.dataset.id) : null, n = v => Math.max(0, +v || 0);
+    saveRec(KP.stock, { ...(old || { id: 's-' + uid(), ts: Date.now() }), name, cat: $('#sf-cat').value, unit: $('#sf-unit').value, qty: n($('#sf-qty').value), min: n($('#sf-min').value), cost: n($('#sf-cost').value), prov: $('#sf-prov').value });
+    closeSheet(); renderAdmMain(); toast('Insumo guardado', 'ok');
+  },
+  's-del': t => { if (!confirm('¿Borrar este insumo?')) return; delRec(KP.stock, t.dataset.id); closeSheet(); renderAdmMain(); },
+  'p-new': () => openSheet('prov', provForm(null), 'modal'),
+  'p-edit': t => openSheet('prov', provForm(getProv().find(p => p.id === t.dataset.id)), 'modal'),
+  'p-save': t => {
+    const name = $('#pf-name').value.trim(); if (!name) return toast('Poné el nombre del proveedor');
+    const old = t.dataset.id ? getProv().find(p => p.id === t.dataset.id) : null;
+    saveRec(KP.prov, { ...(old || { id: 'p-' + uid(), ts: Date.now() }), name, rubro: $('#pf-rubro').value.trim(), phone: $('#pf-phone').value.trim(), days: $('#pf-days').value.trim() });
+    closeSheet(); renderAdmMain(); toast('Proveedor guardado', 'ok');
+  },
+  'p-del': t => {
+    if (!confirm('¿Borrar este proveedor? Sus insumos quedan sin proveedor asignado.')) return;
+    delRec(KP.prov, t.dataset.id); getStock().filter(s => s.prov === t.dataset.id).forEach(s => saveRec(KP.stock, { ...s, prov: '' }));
+    closeSheet(); renderAdmMain();
+  },
+  'po-new': t => poOpen(t.dataset.p),
+  'po-edit': t => { const p = getPO().find(x => x.id === t.dataset.id); if (!p) return; const q = {}; p.lines.forEach(l => q[l.sid] = l.qty); poOpen(p.prov, q, p.id); PO.note = p.note || ''; setSheet(poForm()); },
+  'po-all': () => { poRead(); PO.all = !PO.all; setSheet(poForm()); },
+  'po-save': t => {
+    poRead(); if (!PO.prov) return toast('Elegí un proveedor');
+    const st = getStock(), lines = Object.entries(PO.q).map(([sid, qty]) => { const s = st.find(x => x.id === sid); return s && { sid, name: s.name, unit: s.unit, qty }; }).filter(Boolean);
+    if (!lines.length) return toast('Poné la cantidad de al menos un insumo');
+    const old = PO.id ? getPO().find(p => p.id === PO.id) : null;
+    const rec = { ...(old || { id: 'po-' + uid(), ts: Date.now(), status: 'borrador' }), prov: PO.prov, lines, note: PO.note };
+    saveRec(KP.porders, rec);
+    const sent = t.dataset.send ? poSend(rec) : false;
+    closeSheet(); stk.view = 'ped'; sessionStorage.setItem('pisa_stk', 'ped'); renderAdmMain();
+    if (!t.dataset.send) toast('Pedido guardado en “Por enviar”', 'ok'); else if (sent) toast('Pedido enviado. Cuando llegue, tocá “Llegó”', 'ok');
+  },
+  'po-send': t => { const p = getPO().find(x => x.id === t.dataset.id); if (p && poSend(p)) { renderAdmMain(); toast('Se abrió WhatsApp con el pedido', 'ok'); } },
+  'po-rec': t => {
+    const p = getPO().find(x => x.id === t.dataset.id); if (!p || !confirm('¿Llegó el pedido? Las cantidades se suman al stock.')) return;
+    const st = getStock(); p.lines.forEach(l => { const s = st.find(x => x.id === l.sid); if (s) saveRec(KP.stock, { ...s, qty: Math.round(((+s.qty || 0) + l.qty) * 100) / 100 }); });
+    saveRec(KP.porders, { ...p, status: 'recibido', tsRec: Date.now() }); renderAdmMain(); toast('Stock actualizado', 'ok');
+  },
+  'po-del': t => { if (!confirm('¿Borrar este pedido?')) return; delRec(KP.porders, t.dataset.id); renderAdmMain(); },
+  'po-auto': () => {
+    const low = lowStock(), drafts = getPO().filter(p => p.status === 'borrador'); let made = 0;
+    const byProv = {}; low.filter(s => s.prov && suggest(s)).forEach(s => (byProv[s.prov] = byProv[s.prov] || []).push(s));
+    Object.entries(byProv).forEach(([prov, its]) => {
+      const d = drafts.find(p => p.prov === prov), lines = d ? d.lines.slice() : [];
+      its.forEach(s => { if (!lines.some(l => l.sid === s.id)) lines.push({ sid: s.id, name: s.name, unit: s.unit, qty: suggest(s) }); });
+      saveRec(KP.porders, { ...(d || { id: 'po-' + uid(), ts: Date.now(), status: 'borrador', note: '' }), prov, lines }); made++;
+    });
+    const sinProv = low.filter(s => !s.prov).length;
+    stk.view = 'ped'; sessionStorage.setItem('pisa_stk', 'ped'); renderAdmMain();
+    toast(made ? `${made} ${made === 1 ? 'pedido armado' : 'pedidos armados'}. Revisalos y enviálos${sinProv ? ` · ${sinProv} insumos no tienen proveedor` : ''}` : sinProv ? 'Asigná un proveedor a cada insumo para armar los pedidos solos' : 'No hay nada por reponer', made ? 'ok' : '');
+  },
 };
 
 document.addEventListener('click', e => {
@@ -754,10 +1186,15 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet()
 document.addEventListener('input', e => {
   if (e.target.id === 'q') { query = e.target.value; rerenderMenu(); }
   if (e.target.id === 'adm-q') { admQ = e.target.value; const pos = e.target.selectionStart; renderAdmMain(); const n = $('#adm-q'); n.focus(); n.setSelectionRange(pos, pos); }
+  if (e.target.id === 'stk-q') { stk.q = e.target.value; const pos = e.target.selectionStart; renderAdmMain(); const n = $('#stk-q'); n.focus(); n.setSelectionRange(pos, pos); }
 });
 document.addEventListener('change', e => {
   const t = e.target;
   if (t.id === 'p-half') { P.half = t.value; renderPDyn(); return; }
+  if (t.id === 'dash-demo') { dash.demo = t.checked; saveDash(); renderAdmMain(); return; }
+  if (t.id === 'stk-cat') { stk.cat = t.value; renderAdmMain(); return; }
+  if (t.id === 'po-prov') { poRead(); PO.prov = t.value; if (!PO.id) PO.q = {}; getStock().filter(s => s.prov === PO.prov && lvl(s) !== 'ok' && !(s.id in PO.q)).forEach(s => { if (suggest(s)) PO.q[s.id] = suggest(s); }); setSheet(poForm()); return; }
+  if (t.dataset.sq) { const s = getStock().find(x => x.id === t.dataset.sq); if (s) { s.qty = Math.max(0, Math.round((+t.value || 0) * 100) / 100); saveRec(KP.stock, s); t.blur(); renderAdmMain(); } return; }
   if (t.dataset.f && t.dataset.id) {
     if (t.dataset.f === 'available') {
       setOverride(t.dataset.id, { available: t.checked });
@@ -775,11 +1212,13 @@ function onExternalChange(key, oldValue, newValue) {
       const count = k => { try { return JSON.parse(k || '[]').length; } catch { return 0; } };
       if (count(newValue) > count(oldValue)) beep();
     }
+    const ae = document.activeElement; // no pisar lo que el dueño está escribiendo
+    if (ae && ae.matches && ae.matches('#adm-main input, #adm-main select, #adm-main textarea')) return;
     if (admTab !== 'carta' && currentSheet === null) renderAdmMain();
   } else clientSync(key);
 }
 window.addEventListener('storage', e => {
-  if (e.key && Object.values(K).includes(e.key)) onExternalChange(e.key, e.oldValue, e.newValue);
+  if (e.key && (Object.values(K).includes(e.key) || PRIV_KEYS.includes(e.key))) onExternalChange(e.key, e.oldValue, e.newValue);
 });
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.target.id === 'lg-pass' || e.target.id === 'lg-user')) ACT.login(); });
 setInterval(() => { if (isAdmin() && admTab === 'live' && currentSheet === null) renderAdmMain(); }, 30000);
