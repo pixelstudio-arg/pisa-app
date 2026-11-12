@@ -101,7 +101,7 @@ function getMenu() {
 let MENU = getMenu();
 const byId = id => MENU.find(i => i.id === id);
 const hasOptions = i => !!i.ind || i.cat === 'portenas';
-const getOrders = () => LS.get(K.orders, []).filter(o => o && o.id).map(o => ({ ...o, items: Array.isArray(o.items) ? o.items : [] })); // tolera registros incompletos
+const getOrders = () => LS.get(K.orders, []).filter(o => o && o.id && Array.isArray(o.items) && o.items.length); // ignora registros incompletos
 const getCalls = () => LS.get(K.calls, []);
 let cart = (() => { try { return JSON.parse(sessionStorage.getItem(CART_KEY)) || []; } catch { return []; } })();
 const saveCart = () => sessionStorage.setItem(CART_KEY, JSON.stringify(cart));
@@ -547,7 +547,7 @@ function orderCard(o) {
 }
 function liveHTML() {
   const orders = getOrders().filter(o => !o.paid), calls = getCalls().filter(c => c.status === 'pendiente');
-  const col = (s, title) => { const l = orders.filter(o => o.status === s); return `<div class="kcol"><h3>${title}<b>${l.length}</b></h3>${l.map(orderCard).join('') || '<p class="k-empty">Sin pedidos</p>'}</div>`; };
+  const col = (s, title) => { const l = orders.filter(o => o.status === s); return `<div class="kcol"><h3>${title}<b>${l.length}</b></h3>${l.map(o => { try { return orderCard(o); } catch { return ''; } }).join('') || '<p class="k-empty">Sin pedidos</p>'}</div>`; };
   return `<div class="live">
     <aside class="callcol">
       <h3>Llamados de mesa<b>${calls.length}</b></h3>
@@ -571,7 +571,6 @@ function cartaHTML() {
     <div class="carta-bar">
       <label class="search">${ICON.search}<input id="adm-q" type="search" placeholder="Buscar producto…" value="${esc(admQ)}"></label>
       <button class="btn primary sm" data-act="new-item">+ Nuevo producto</button>
-      <button class="btn ghost sm" data-act="reset">Restablecer demo</button>
     </div>
     ${CATS.map(c => {
       const items = MENU.filter(i => i.cat === c.id && (!q || i.name.toLowerCase().includes(q)));
@@ -744,7 +743,6 @@ const ACT = {
     MENU = getMenu(); closeSheet(); renderAdmMain(); toast('Producto creado', 'ok');
   },
   'del-item': t => { if (!confirm('¿Eliminar este producto?')) return; delRec(K.custom, t.dataset.id); MENU = getMenu(); renderAdmMain(); },
-  reset: () => { if (!confirm('Esto borra TODOS los pedidos, llamados y cambios de carta. ¿Seguir?')) return; Object.values(K).forEach(k => localStorage.removeItem(k)); if (REMOTE) REMOTE.remove(); MENU = getMenu(); renderAdmMain(); toast('Demo restablecida'); },
 };
 
 document.addEventListener('click', e => {
