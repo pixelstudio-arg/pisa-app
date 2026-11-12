@@ -7,10 +7,10 @@
 const PISA_CONFIG = {
   adminPin: '2580',
   firebase: {
-    apiKey: '',
-    authDomain: '',
-    databaseURL: '',
-    projectId: '',
-    appId: '',
+    apiKey: 'AIzaSyDvafYR-f9GSR-pdvkiCtME9K6vrHQ-hJ4',
+    authDomain: 'pisa-app.firebaseapp.com',
+    databaseURL: 'https://pisa-app-default-rtdb.firebaseio.com',
+    projectId: 'pisa-app',
+    appId: '1:690598074954:web:2ed921b22b639121a924b3',
   },
 };
