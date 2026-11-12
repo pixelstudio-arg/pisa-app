@@ -101,7 +101,7 @@ function getMenu() {
 let MENU = getMenu();
 const byId = id => MENU.find(i => i.id === id);
 const hasOptions = i => !!i.ind || i.cat === 'portenas';
-const getOrders = () => LS.get(K.orders, []);
+const getOrders = () => LS.get(K.orders, []).filter(o => o && o.id).map(o => ({ ...o, items: Array.isArray(o.items) ? o.items : [] })); // tolera registros incompletos
 const getCalls = () => LS.get(K.calls, []);
 let cart = (() => { try { return JSON.parse(sessionStorage.getItem(CART_KEY)) || []; } catch { return []; } })();
 const saveCart = () => sessionStorage.setItem(CART_KEY, JSON.stringify(cart));
