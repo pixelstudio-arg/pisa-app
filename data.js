@@ -12,6 +12,7 @@ const PISA = {
   whatsapp: 'https://api.whatsapp.com/send?phone=5493517576294',
   instagram: 'https://www.instagram.com/pisa.ar/',
   maps: 'https://www.google.com/maps/search/?api=1&query=Pisa+Lima+917+C%C3%B3rdoba',
+  reviewsUrl: 'https://www.google.com/maps?cid=11564504418086399121', // ficha de Pisa en Google Maps
   rating: 4.3,
   reviews: 309,
   tables: 12,

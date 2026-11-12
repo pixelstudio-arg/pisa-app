@@ -196,7 +196,7 @@ function renderClient() {
         <p class="claim">Napoletana contemporánea y al molde estilo porteña. Pedí desde tu mesa.</p>
         <div class="hero-meta">
           <span class="dot ${st.open ? 'on' : ''}">${st.text}</span>
-          <span>★ ${String(PISA.rating).replace('.', ',')} · ${PISA.reviews} reseñas</span>
+          <button class="ratebtn" data-act="reviews">★ ${String(PISA.rating).replace('.', ',')} · ${PISA.reviews} reseñas ›</button>
         </div>
       </div>
     </header>
@@ -320,7 +320,7 @@ function renderPDyn() {
       <div class="chips">${ings.map(n => `<button class="chipbtn rm ${P.removed.includes(n) ? 'on' : ''}" data-act="p-rm" data-n="${esc(n)}" aria-pressed="${P.removed.includes(n)}">${P.removed.includes(n) ? 'Sin ' : ''}${esc(n)}</button>`).join('')}</div>` : ''}
     ${CUSTOM_CATS.includes(i.cat) ? `<div class="opt-title">Agregar extras</div>
       <div class="chips">${EXTRAS.map(e => `<button class="chipbtn ex ${P.extras.includes(e.id) ? 'on' : ''}" data-act="p-ex" data-x="${e.id}" aria-pressed="${P.extras.includes(e.id)}">+ ${esc(e.name)}<small>${e.price ? money(e.price) : ''}</small></button>`).join('')}</div>
-      ${EXTRAS.some(e => !e.price) ? '<p class="hint">El valor de los extras lo confirma el mozo y se suma en la cuenta.</p>' : ''}` : ''}
+      <p class="hint">Los extras agregan un costo adicional al pedido.</p>` : ''}
     <div class="opt-title">Aclaraciones</div>
     <textarea id="p-note" rows="2" maxlength="140" placeholder="Sin cebolla, bien cocida, para compartir…">${esc(note)}</textarea>
     <div class="p-foot">
@@ -397,6 +397,7 @@ function mesaHTML() {
     </div>`).join('')}
     <div class="total"><span>Cuenta de la mesa</span><strong>${money(total)}</strong></div>
     <button class="btn primary block" data-act="call" data-type="cuenta">Pedir la cuenta</button>
+    <button class="linkbtn" data-act="reviews">¿Cómo estuvo todo? Mirá o dejá tu reseña</button>
   </div>`;
 }
 
@@ -430,6 +431,18 @@ function sendCall(type, detail = '') {
   if (navigator.vibrate) navigator.vibrate([30, 60, 30]);
 }
 
+function reviewsHTML() {
+  const full = Math.round(PISA.rating);
+  return `<div class="pad info">
+    <h2 class="sh-title" style="padding:0">Reseñas</h2>
+    <div class="ratebig">${String(PISA.rating).replace('.', ',')}</div>
+    <div class="stars" aria-label="${PISA.rating} de 5 estrellas">${'★'.repeat(full)}<i>${'★'.repeat(5 - full)}</i></div>
+    <p class="tag">${PISA.reviews} opiniones en Google</p>
+    <a class="btn primary block" href="${PISA.reviewsUrl}" target="_blank" rel="noopener">Leer las reseñas</a>
+    <a class="btn ghost block" href="${PISA.reviewsUrl}" target="_blank" rel="noopener">Dejar mi reseña</a>
+    <p class="hint">Se abren en Google Maps, en la ficha de Pisa.</p>
+  </div>`;
+}
 function infoHTML() {
   return `<div class="pad info">
     <img class="mascot" src="img/logo.jpg" alt="Mascota de Pisa">
@@ -444,6 +457,7 @@ function infoHTML() {
       <a class="btn ghost" href="${PISA.maps}" target="_blank" rel="noopener">Cómo llegar</a>
       <a class="btn ghost" href="${PISA.whatsapp}" target="_blank" rel="noopener">WhatsApp</a>
       <a class="btn ghost" href="${PISA.instagram}" target="_blank" rel="noopener">Instagram</a>
+      <button class="btn ghost" data-act="reviews">Reseñas</button>
     </div>
   </div>`;
 }
@@ -510,7 +524,8 @@ function qrHTML() {
   return `<div class="qrs">
     <div class="carta-bar no-print">
       <p class="hint">Un código por mesa. Imprimilos y pegalos en cada mesa: el cliente lo escanea y la app ya sabe en qué mesa está.</p>
-      <button class="btn primary sm" data-act="print">Imprimir códigos</button>
+      <span class="qr-actions"><button class="btn primary sm" data-act="qr-pdf">Descargar PDF</button>
+      <button class="btn ghost sm" data-act="print">Imprimir</button></span>
     </div>
     ${local ? '<p class="warn no-print">Estás en una dirección local: estos QR solo funcionan en esta computadora. Generalos de nuevo desde la app publicada antes de imprimir.</p>' : ''}
     <div class="qrgrid">${Array.from({ length: PISA.tables }, (_, x) => {
@@ -650,6 +665,7 @@ const isAdmin = () => location.hash === '#admin';
 const ACT = {
   close: closeSheet,
   info: () => openSheet('info', infoHTML(), 'info'),
+  reviews: () => openSheet('reviews', reviewsHTML(), 'info'),
   top: () => window.scrollTo({ top: 0, behavior: 'smooth' }),
   veg: () => { onlyVeg = !onlyVeg; const b = $('.vegbtn'); b.classList.toggle('on', onlyVeg); b.setAttribute('aria-pressed', onlyVeg); rerenderMenu(); },
   'clear-search': () => { query = ''; onlyVeg = false; $('#q').value = ''; $('.vegbtn').classList.remove('on'); rerenderMenu(); },
@@ -674,6 +690,28 @@ const ACT = {
   'o-next': t => { const os = getOrders(), o = os.find(x => x.id === t.dataset.id); if (o) { o.status = t.dataset.s; saveRec(K.orders, o); renderAdmMain(); } },
   'c-done': t => { const cs = getCalls(), c = cs.find(x => x.id === t.dataset.id); if (c) { c.status = 'atendido'; c.tsDone = Date.now(); saveRec(K.calls, c); renderAdmMain(); } },
   print: () => window.print(),
+  'qr-pdf': async () => {
+    try {
+      if (!window.jspdf) await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+      const doc = new window.jspdf.jsPDF({ unit: 'mm', format: 'a4' });
+      const url = location.origin + location.pathname, cols = 3, rows = 4, m = 10, cw = (210 - 2 * m) / cols, ch = (297 - 2 * m) / rows;
+      for (let i = 0; i < PISA.tables; i++) {
+        const k = i % (cols * rows);
+        if (i && k === 0) doc.addPage();
+        const x = m + (k % cols) * cw, y = m + Math.floor(k / cols) * ch, cx = x + cw / 2;
+        doc.setDrawColor(200); doc.setLineWidth(.2); doc.roundedRect(x + 2, y + 2, cw - 4, ch - 4, 3, 3);
+        doc.setTextColor(224, 40, 43); doc.setFont('times', 'bolditalic'); doc.setFontSize(22); doc.text('Pisa', cx, y + 11.5, { align: 'center' });
+        const q = qrcode(0, 'M'); q.addData(`${url}?mesa=${i + 1}`); q.make();
+        const n = q.getModuleCount(), size = 38, c = size / n, qx = cx - size / 2, qy = y + 15;
+        doc.setFillColor(0, 0, 0);
+        for (let r = 0; r < n; r++) for (let cc = 0; cc < n; cc++) if (q.isDark(r, cc)) doc.rect(qx + cc * c, qy + r * c, c + .03, c + .03, 'F');
+        doc.setTextColor(31, 26, 23); doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.text(`Mesa ${i + 1}`, cx, qy + size + 7, { align: 'center' });
+        doc.setTextColor(107, 98, 90); doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.text('Escaneá, mirá la carta y pedí desde tu mesa', cx, qy + size + 11.5, { align: 'center' });
+      }
+      doc.save('pisa-qr-mesas.pdf');
+      toast('PDF descargado', 'ok');
+    } catch { toast('No se pudo generar el PDF. Revisá la conexión.'); }
+  },
   login: async () => {
     const u = $('#lg-user').value.trim().toLowerCase(), p = $('#lg-pass').value;
     if (!u || !p) return toast('Completá usuario y contraseña');

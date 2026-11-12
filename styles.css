@@ -316,3 +316,12 @@ body.admin #sheet.open { transform: translate(-50%, -50%); opacity: 1; pointer-e
 .chipbtn.ex.on { border-color: var(--green); background: rgba(134, 179, 106, .16); color: #b9dba3; }
 .mods { display: block; font-style: normal; font-size: 13px; color: #ff9a6b; font-weight: 500; }
 .kcard .mods { font-size: 14px; font-weight: 600; }
+
+/* ── reseñas y acciones de QR */
+.ratebtn { color: #f2d28a; font-size: 14px; font-weight: 500; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(242, 210, 138, .5); padding: 0; }
+.ratebig { font-size: 64px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.stars { font-size: 28px; letter-spacing: 4px; color: var(--amber); line-height: 1; } .stars i { font-style: normal; color: var(--surface2); }
+.info .btn.block { width: 100%; }
+.linkbtn { color: var(--muted); font-size: 14px; text-decoration: underline; text-underline-offset: 3px; padding: 8px; justify-self: center; }
+.linkbtn:hover { color: var(--cream); }
+.qr-actions { display: flex; gap: 8px; }
