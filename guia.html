@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#f7f3ee">
+<title>Pisa · Guía de la app</title>
+<link rel="icon" href="img/logo.jpg">
+<style>
+  :root { --red: #e0282b; --ink: #1f1a17; --muted: #6f665d; --cream: #f7f3ee; --card: #fff; --line: #e6ded3; --green: #2e7d46; --greenbg: #eaf5ee; --amberbg: #fff5d9; --amber: #8a6100; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; background: var(--cream); color: var(--ink); font: 17px/1.5 "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif; }
+  button { font: inherit; color: inherit; cursor: pointer; border: 0; background: none; }
+  a { color: var(--red); }
+  :focus-visible { outline: 3px solid #f2b84b; outline-offset: 2px; }
+  .checker { height: 12px; background: repeating-conic-gradient(var(--red) 0 25%, var(--cream) 0 50%) 0 0 / 12px 12px; }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 0 16px 56px; }
+  header { text-align: center; padding: 26px 0 18px; }
+  header h1 { margin: 0; font: italic 700 60px/1 Georgia, "Times New Roman", serif; color: var(--red); letter-spacing: -1px; }
+  header p { margin: 6px 0 0; color: var(--muted); }
+
+  /* enlaces */
+  .link { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 16px; margin-bottom: 12px; }
+  .link h2 { margin: 0; font-size: 18px; } .link p { margin: 2px 0 10px; color: var(--muted); font-size: 15px; }
+  .url { display: block; background: var(--cream); border: 1px dashed #cfc4b5; border-radius: 10px; padding: 10px 12px; font: 14px/1.4 Consolas, "Courier New", monospace; word-break: break-all; user-select: all; }
+  .row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .btn { flex: 1; min-width: 96px; min-height: 46px; padding: 0 14px; border-radius: 999px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; text-decoration: none; border: 1px solid var(--ink); color: var(--ink); background: var(--card); transition: transform .12s, background .2s; }
+  .btn:active { transform: scale(.96); }
+  .btn.main { background: var(--red); border-color: var(--red); color: #fff; }
+  .btn.ok { background: var(--green); border-color: var(--green); color: #fff; }
+
+  /* pestañas */
+  .tabs { position: sticky; top: 0; z-index: 5; display: flex; gap: 6px; overflow-x: auto; padding: 12px 0; margin: 10px 0 4px; background: var(--cream); scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs button { flex: none; min-height: 42px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); font-weight: 600; font-size: 15px; color: var(--muted); }
+  .tabs button[aria-selected="true"] { background: var(--ink); border-color: var(--ink); color: #fff; }
+  .panel { display: none; animation: in .3s ease both; } .panel.on { display: block; }
+  @keyframes in { from { opacity: 0; transform: translateY(8px); } }
+  .panel > h2 { font-size: 22px; margin: 14px 0 4px; } .panel > .sub { color: var(--muted); margin: 0 0 14px; }
+
+  /* lista para tildar */
+  .check { display: flex; gap: 12px; align-items: flex-start; width: 100%; text-align: left; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-bottom: 8px; transition: background .2s, border-color .2s; }
+  .check i { flex: none; width: 26px; height: 26px; border-radius: 50%; border: 2px solid #c9bfb2; display: grid; place-items: center; font-style: normal; color: #fff; font-weight: 700; margin-top: 1px; transition: .2s; }
+  .check b { display: block; } .check span { color: var(--muted); font-size: 15px; }
+  .check[aria-pressed="true"] { background: var(--greenbg); border-color: #b9dcc4; }
+  .check[aria-pressed="true"] i { background: var(--green); border-color: var(--green); }
+  .check[aria-pressed="true"] i::after { content: "✓"; }
+  .progress { height: 8px; border-radius: 99px; background: #e9e1d6; overflow: hidden; margin: 4px 0 6px; } .progress i { display: block; height: 100%; width: 0; background: var(--green); transition: width .3s; }
+  .prow { display: flex; justify-content: space-between; align-items: center; color: var(--muted); font-size: 14px; margin-bottom: 12px; }
+  .mini { text-decoration: underline; text-underline-offset: 3px; color: var(--muted); font-size: 14px; padding: 6px 0; }
+
+  /* acordeón */
+  details { background: var(--card); border: 1px solid var(--line); border-radius: 14px; margin-bottom: 8px; overflow: hidden; }
+  summary { list-style: none; cursor: pointer; padding: 15px 44px 15px 16px; font-weight: 600; position: relative; }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: "+"; position: absolute; right: 16px; top: 50%; transform: translateY(-50%); font-size: 24px; color: var(--red); font-weight: 400; transition: transform .2s; }
+  details[open] summary::after { transform: translateY(-50%) rotate(45deg); }
+  details .in { padding: 0 16px 14px; color: #40372f; } details .in p { margin: 0 0 8px; } details ol, details ul { margin: 0 0 8px; padding-left: 20px; } details li { margin-bottom: 4px; }
+  .tag { display: inline-block; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; border-radius: 99px; padding: 2px 9px; margin-left: 6px; vertical-align: 2px; }
+  .tag.you { background: var(--greenbg); color: var(--green); } .tag.ps { background: var(--amberbg); color: var(--amber); }
+  .note { background: #fdecec; border-left: 5px solid var(--red); border-radius: 10px; padding: 11px 14px; margin: 8px 0; }
+
+  /* dos listas */
+  .who { border-radius: 18px; padding: 16px 18px; margin-bottom: 12px; border: 1px solid; }
+  .who h3 { margin: 0 0 8px; font-size: 18px; } .who ul { margin: 0; padding-left: 20px; } .who li { margin-bottom: 6px; }
+  .who.you { background: var(--greenbg); border-color: #b9dcc4; } .who.ps { background: var(--amberbg); border-color: #ecd9a0; }
+  .filter { display: flex; gap: 6px; margin-bottom: 12px; }
+  .filter button { flex: 1; min-height: 42px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); font-weight: 600; font-size: 15px; color: var(--muted); }
+  .filter button[aria-pressed="true"] { background: var(--ink); color: #fff; border-color: var(--ink); }
+
+  footer { text-align: center; color: var(--muted); font-size: 14px; padding-top: 22px; }
+  #toast { position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 30px); background: var(--ink); color: #fff; padding: 12px 20px; border-radius: 999px; font-weight: 600; opacity: 0; transition: .25s; pointer-events: none; z-index: 20; white-space: nowrap; }
+  #toast.on { opacity: 1; transform: translate(-50%, 0); }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+  @media print { .tabs, .row, .filter, #toast, .mini { display: none !important; } .panel { display: block !important; } details { break-inside: avoid; } details > .in { display: block; } body { background: #fff; } }
+</style>
+</head>
+<body>
+<div class="checker"></div>
+<div class="wrap">
+  <header>
+    <h1>Pisa</h1>
+    <p>Guía rápida de tu app</p>
+  </header>
+
+  <section class="link">
+    <h2>Carta para tus clientes</h2>
+    <p>Lo que ve quien escanea el QR de la mesa.</p>
+    <span class="url" id="u1">https://pixelstudio-arg.github.io/pisa-app/?mesa=1</span>
+    <div class="row">
+      <button class="btn main" data-copy="u1">Copiar</button>
+      <a class="btn" href="https://pixelstudio-arg.github.io/pisa-app/?mesa=1" target="_blank" rel="noopener">Abrir</a>
+      <button class="btn" data-share="u1" data-title="Carta de Pisa" hidden>Compartir</button>
+    </div>
+  </section>
+
+  <section class="link">
+    <h2>Panel del local</h2>
+    <p>Solo para vos y tu equipo. Pide usuario y contraseña.</p>
+    <span class="url" id="u2">https://pixelstudio-arg.github.io/pisa-app/#admin</span>
+    <div class="row">
+      <button class="btn main" data-copy="u2">Copiar</button>
+      <a class="btn" href="https://pixelstudio-arg.github.io/pisa-app/#admin" target="_blank" rel="noopener">Abrir</a>
+      <button class="btn" data-share="u2" data-title="Panel de Pisa" hidden>Compartir</button>
+    </div>
+  </section>
+
+  <nav class="tabs" role="tablist" aria-label="Secciones de la guía">
+    <button role="tab" aria-selected="true" data-tab="noche">Cada noche</button>
+    <button role="tab" aria-selected="false" data-tab="como">Cómo se usa</button>
+    <button role="tab" aria-selected="false" data-tab="cambios">Qué puedo cambiar</button>
+    <button role="tab" aria-selected="false" data-tab="ayuda">Si algo falla</button>
+  </nav>
+
+  <!-- CADA NOCHE -->
+  <section class="panel on" id="noche">
+    <h2>Antes de abrir</h2>
+    <p class="sub">Tocá cada paso cuando lo hagas.</p>
+    <div class="progress"><i id="bar"></i></div>
+    <div class="prow"><span id="count">0 de 5 listos</span><button class="mini" id="reset">Empezar de nuevo</button></div>
+    <button class="check" aria-pressed="false"><i></i><div><b>Abrí el panel</b><span>En la tablet o compu de la caja. Entrá con tu usuario y contraseña.</span></div></button>
+    <button class="check" aria-pressed="false"><i></i><div><b>Mirá que diga “En línea”</b><span>Arriba, con un punto verde. Si no, revisá el wifi.</span></div></button>
+    <button class="check" aria-pressed="false"><i></i><div><b>Tocá la pantalla una vez</b><span>Así se activa el sonido que avisa cuando entra un pedido.</span></div></button>
+    <button class="check" aria-pressed="false"><i></i><div><b>Marcá lo que no hay hoy</b><span>En “Carta”, apagá “Disponible” en lo que esté agotado.</span></div></button>
+    <button class="check" aria-pressed="false"><i></i><div><b>Dejá el panel en “En vivo”</b><span>Ahí aparecen los pedidos y los llamados de las mesas.</span></div></button>
+  </section>
+
+  <!-- CÓMO SE USA -->
+  <section class="panel" id="como">
+    <h2>Cómo se usa</h2>
+    <p class="sub">Tocá cada tema para ver los pasos.</p>
+    <details open>
+      <summary>Qué hace el cliente desde su celular</summary>
+      <div class="in"><ul>
+        <li>Escanea el QR de su mesa y ve la carta con fotos y precios.</li>
+        <li>Elige tamaño, mitad y mitad, <b>quita ingredientes</b> o <b>suma extras</b>.</li>
+        <li>Envía el pedido y ve cómo avanza.</li>
+        <li>Llama al mozo o pide la cuenta con un botón.</li>
+        <li>Lee las reseñas de Google o deja la suya.</li>
+      </ul></div>
+    </details>
+    <details>
+      <summary>Atender un pedido</summary>
+      <div class="in"><p>En “En vivo”, cada pedido es una tarjeta. Tocá el botón rojo para avanzarlo:</p>
+        <ol><li><b>Aceptar · al horno</b> cuando lo toma la cocina.</li><li><b>Marcar listo</b> cuando sale.</li><li><b>Entregado en mesa</b> cuando llega al cliente.</li></ol>
+        <p>En naranja vas a ver los cambios que pidió: “Sin cebolla · Extra queso azul”.</p></div>
+    </details>
+    <details>
+      <summary>Atender un llamado de mesa</summary>
+      <div class="in"><p>A la izquierda aparece qué mesa llama y para qué: mozo, la cuenta (con cómo quiere pagar), cubiertos u otra cosa.</p><p>Cuando el mozo va, tocá <b>Atender</b>. Al cliente le avisa que va en camino.</p></div>
+    </details>
+    <details>
+      <summary>Cobrar y cerrar una mesa</summary>
+      <div class="in"><p>En “Resumen”, buscá la mesa y tocá <b>Cobrar y cerrar</b>.</p>
+        <div class="note"><b>No te lo saltees.</b> Si no cerrás la mesa, el próximo cliente ve la cuenta del anterior.</div>
+        <p>El pago se hace como siempre, en la mesa. La app no cobra.</p></div>
+    </details>
+    <details>
+      <summary>Cambiar precios, fotos y productos</summary>
+      <div class="in"><p>Todo en la pestaña “Carta”. Se actualiza al instante en los celulares.</p><ul>
+        <li><b>Precio:</b> escribí el nuevo y tocá afuera del casillero.</li>
+        <li><b>Agotado:</b> apagá el interruptor “Disponible”.</li>
+        <li><b>Foto o video:</b> tocá la foto chiquita del producto.</li>
+        <li><b>Producto nuevo:</b> botón “+ Nuevo producto”.</li>
+      </ul></div>
+    </details>
+    <details>
+      <summary>Imprimir los QR de las mesas</summary>
+      <div class="in"><p>En “Mesas y QR”, tocá <b>Descargar PDF</b>. Baja una hoja con las 12 mesas, lista para imprimir y pegar.</p></div>
+    </details>
+    <details>
+      <summary>Ver cómo va la noche</summary>
+      <div class="in"><p>En “Resumen” tenés las ventas del día, cuántos pedidos hubo, el ticket promedio y lo más pedido.</p></div>
+    </details>
+    <details>
+      <summary>Cambiar tu contraseña</summary>
+      <div class="in"><p>En el panel, arriba a la derecha: <b>Cambiar contraseña</b>. Escribí la nueva dos veces (mínimo 8 letras o números) y guardá.</p><p>Hacelo el primer día y cada vez que alguien del equipo deje de trabajar en el local.</p></div>
+    </details>
+  </section>
+
+  <!-- QUÉ PUEDO CAMBIAR -->
+  <section class="panel" id="cambios">
+    <h2>Qué puedo cambiar</h2>
+    <p class="sub">Algunas cosas las hacés vos al instante. Otras las hace Pixel Studio.</p>
+    <div class="filter" role="group" aria-label="Filtrar">
+      <button aria-pressed="true" data-f="all">Todo</button>
+      <button aria-pressed="false" data-f="you">Yo solo</button>
+      <button aria-pressed="false" data-f="ps">Con ayuda</button>
+    </div>
+    <div class="who you" data-who="you">
+      <h3>✓ Lo hacés vos, desde el panel</h3>
+      <ul>
+        <li>Precios de cualquier producto</li>
+        <li>Marcar productos como agotados</li>
+        <li>Fotos y videos de los productos</li>
+        <li>Agregar productos nuevos y borrarlos</li>
+        <li>Avanzar pedidos y atender llamados</li>
+        <li>Cobrar y cerrar mesas</li>
+        <li>Descargar e imprimir los QR</li>
+        <li>Tu contraseña</li>
+      </ul>
+    </div>
+    <div class="who ps" data-who="ps">
+      <h3>✎ Pedíselo a Pixel Studio</h3>
+      <ul>
+        <li>Precio de los extras y cuáles se ofrecen</li>
+        <li>Nombre o descripción de los productos de la carta original</li>
+        <li>Quitar del todo un producto de la carta original</li>
+        <li>Categorías de la carta (agregar, quitar, reordenar)</li>
+        <li>Cantidad de mesas</li>
+        <li>Dirección, horario y teléfono que muestra la app</li>
+        <li>La calificación de Google que aparece en la portada</li>
+        <li>Usuario del panel, o contraseña si la olvidaste</li>
+        <li>Colores, textos de portada y diseño</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- SI ALGO FALLA -->
+  <section class="panel" id="ayuda">
+    <h2>Si algo falla</h2>
+    <p class="sub">Lo más común se resuelve en un minuto.</p>
+    <details><summary>No me aparecen los pedidos</summary><div class="in"><p>Recargá la página. Después mirá que arriba diga “En línea”.</p></div></details>
+    <details><summary>Dice “Sin conexión”</summary><div class="in"><p>Se cortó el wifi de la tablet o compu. Cuando vuelve, se pone al día solo.</p></div></details>
+    <details><summary>No suena cuando entra un pedido</summary><div class="in"><p>Tocá la pantalla una vez y subí el volumen.</p></div></details>
+    <details><summary>Un cliente ve pedidos que no son suyos</summary><div class="in"><p>La mesa anterior quedó abierta. En “Resumen”, tocá “Cobrar y cerrar”.</p></div></details>
+    <details><summary>Al cliente no le carga o no le envía el pedido</summary><div class="in"><p>Su celular está sin internet. Ofrecele el wifi del local.</p></div></details>
+    <details><summary>No me deja entrar al panel</summary><div class="in"><p>Revisá que no haya espacios de más. La contraseña distingue mayúsculas. Si la olvidaste, Pixel Studio te da una nueva.</p></div></details>
+    <details><summary>Cambié un precio y no se guardó</summary><div class="in"><p>Después de escribirlo, tocá afuera del casillero. Tiene que aparecer “Precio actualizado”.</p></div></details>
+    <div class="who ps" style="margin-top:14px"><h3>¿Otra cosa?</h3><p style="margin:0">Escribile a Pixel Studio y lo resolvemos.</p></div>
+  </section>
+
+  <footer>Pisa · Lima 917, B° General Paz, Córdoba<br>App hecha por Pixel Studio</footer>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var $$ = function (s, r) { return [].slice.call((r || document).querySelectorAll(s)); };
+  var toastEl = $('#toast'), tt;
+  function toast(m) { toastEl.textContent = m; toastEl.classList.add('on'); clearTimeout(tt); tt = setTimeout(function () { toastEl.classList.remove('on'); }, 1800); }
+  function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
+
+  // copiar y compartir enlaces
+  function copy(text) {
+    if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+    return new Promise(function (ok, no) {
+      var t = document.createElement('textarea'); t.value = text; t.style.position = 'fixed'; t.style.opacity = '0';
+      document.body.appendChild(t); t.select();
+      try { document.execCommand('copy') ? ok() : no(); } catch (e) { no(e); }
+      document.body.removeChild(t);
+    });
+  }
+  $$('[data-copy]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      copy($('#' + b.dataset.copy).textContent.trim()).then(function () {
+        var old = b.textContent; b.textContent = '¡Copiado!'; b.classList.add('ok'); toast('Enlace copiado');
+        setTimeout(function () { b.textContent = old; b.classList.remove('ok'); }, 1600);
+      }, function () { toast('Mantené apretado el enlace para copiarlo'); });
+    });
+  });
+  $$('[data-share]').forEach(function (b) {
+    if (!navigator.share) return;
+    b.hidden = false;
+    b.addEventListener('click', function () { navigator.share({ title: b.dataset.title, url: $('#' + b.dataset.share).textContent.trim() }).catch(function () {}); });
+  });
+
+  // pestañas
+  var tabs = $$('.tabs [role=tab]');
+  function show(id, scroll) {
+    tabs.forEach(function (t) { t.setAttribute('aria-selected', t.dataset.tab === id); });
+    $$('.panel').forEach(function (p) { p.classList.toggle('on', p.id === id); });
+    store('pisa_guia_tab', id);
+    if (scroll) $('.tabs').scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }
+  tabs.forEach(function (t) { t.addEventListener('click', function () { show(t.dataset.tab, true); }); });
+  var saved = store('pisa_guia_tab'); if (saved && $('#' + saved)) show(saved);
+
+  // lista de cada noche (se recuerda en este dispositivo)
+  var checks = $$('.check');
+  function paint() {
+    var n = checks.filter(function (c) { return c.getAttribute('aria-pressed') === 'true'; }).length;
+    $('#bar').style.width = (n / checks.length * 100) + '%';
+    $('#count').textContent = n === checks.length ? '¡Todo listo para abrir!' : n + ' de ' + checks.length + ' listos';
+    store('pisa_guia_checks', checks.map(function (c) { return c.getAttribute('aria-pressed') === 'true' ? 1 : 0; }).join(''));
+  }
+  var st = store('pisa_guia_checks') || '';
+  checks.forEach(function (c, i) {
+    if (st[i] === '1') c.setAttribute('aria-pressed', 'true');
+    c.addEventListener('click', function () { c.setAttribute('aria-pressed', c.getAttribute('aria-pressed') !== 'true'); paint(); });
+  });
+  $('#reset').addEventListener('click', function () { checks.forEach(function (c) { c.setAttribute('aria-pressed', 'false'); }); paint(); });
+  paint();
+
+  // filtro "qué puedo cambiar"
+  $$('.filter button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      $$('.filter button').forEach(function (x) { x.setAttribute('aria-pressed', x === b); });
+      $$('[data-who]').forEach(function (w) { w.hidden = b.dataset.f !== 'all' && w.dataset.who !== b.dataset.f; });
+    });
+  });
+})();
+</script>
+</body>
+</html>
