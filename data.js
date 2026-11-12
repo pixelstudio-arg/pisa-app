@@ -28,16 +28,30 @@ const CATS = [
   { id: 'conalcohol',  name: 'Con alcohol',  sub: 'Una pisa y una pinta lo solucionan todo' },
 ];
 
+// Extras que el cliente puede sumar a un producto. price: 0 = "precio a confirmar" (lo define el local).
+const EXTRAS = [
+  { id: 'muzza', name: 'Mozzarella extra', price: 0 },
+  { id: 'jamon', name: 'Jamón cocido', price: 0 },
+  { id: 'crudo', name: 'Jamón crudo', price: 0 },
+  { id: 'azul', name: 'Queso azul', price: 0 },
+  { id: 'rucula', name: 'Rúcula', price: 0 },
+  { id: 'hongos', name: 'Hongos', price: 0 },
+  { id: 'pepperoni', name: 'Pepperoni', price: 0 },
+  { id: 'huevo', name: 'Huevo', price: 0 },
+];
+// Categorías donde se pueden quitar ingredientes / sumar extras (las bebidas no).
+const CUSTOM_CATS = ['entradas', 'napoletanas', 'portenas', 'rellenas', 'entrepanes', 'otras'];
+
 const I = (id, cat, name, desc, price, extra = {}) => ({ id, cat, name, desc, price, available: true, ...extra });
 const img = n => `img/${n}.jpg`;
 
 const ITEMS = [
   // Entradas
-  I('e-provoleta', 'entradas', 'Provoleta', 'Con champis o tomates confitados, envuelta en masa napoletana.', 13000),
-  I('e-papas1', 'entradas', 'Papas 1', 'Papas fritas con cheddar, chips de jamón crudo y cebollita de verdeo.', 11000, { img: img('papas1') }),
-  I('e-papas2', 'entradas', 'Papas 2', 'Papas fritas con alioli de la casa, huevo a la plancha y pesto.', 11000, { img: img('papas2'), veg: true }),
-  I('e-faina', 'entradas', 'Fainá', 'La porción. De jueves a domingo.', 3000, { img: img('faina'), veg: true }),
-  I('e-pisita', 'entradas', 'Pisita', 'Chalitas de masa de pisa con dips de sriracha, alioli y cheddar.', 10000),
+  I('e-provoleta', 'entradas', 'Provoleta', 'Con champis o tomates confitados, envuelta en masa napoletana.', 13000, { ing: [] }),
+  I('e-papas1', 'entradas', 'Papas 1', 'Papas fritas con cheddar, chips de jamón crudo y cebollita de verdeo.', 11000, { img: img('papas1') , ing: ['Cheddar', 'Chips de jamón crudo', 'Cebollita de verdeo'] }),
+  I('e-papas2', 'entradas', 'Papas 2', 'Papas fritas con alioli de la casa, huevo a la plancha y pesto.', 11000, { img: img('papas2'), veg: true , ing: ['Alioli', 'Huevo a la plancha', 'Pesto'] }),
+  I('e-faina', 'entradas', 'Fainá', 'La porción. De jueves a domingo.', 3000, { img: img('faina'), veg: true , ing: [] }),
+  I('e-pisita', 'entradas', 'Pisita', 'Chalitas de masa de pisa con dips de sriracha, alioli y cheddar.', 10000, { ing: ['Sriracha', 'Alioli', 'Cheddar'] }),
 
   // Napoletanas (entera / individual)
   I('n-muzza', 'napoletanas', 'Muzza clásica', 'Salsa de tomate, mozzarella, orégano, pesto.', 18000, { ind: 10000, veg: true, img: img('muzza') }),
@@ -75,9 +89,9 @@ const ITEMS = [
   I('p-cantimpalo', 'portenas', 'Cantimpalo', 'Salsa de tomate, mozzarella, cantimpalo y orégano.', 28000, { img: img('cantimpalo') }),
 
   // Rellenas
-  I('r-clasica', 'rellenas', 'Fugazzeta clásica', '¡800 g de pura muzzarella! Generosa, cremosa y llena de sabor, coronada con cebolla para el equilibrio perfecto.', 30000, { veg: true, img: img('fugazza-portena'), hot: true }),
-  I('r-jamon', 'rellenas', 'Fugazzeta con jamón', 'La clásica rellena, con jamón cocido.', 33000),
-  I('r-4quesos', 'rellenas', 'Fugazzeta 4 quesos', '¡Una bomba de queso! Rellena de muzzarella, queso azul, cuartirolo y reggianito. Para los verdaderos fanáticos del queso.', 36000, { veg: true }),
+  I('r-clasica', 'rellenas', 'Fugazzeta clásica', '¡800 g de pura muzzarella! Generosa, cremosa y llena de sabor, coronada con cebolla para el equilibrio perfecto.', 30000, { veg: true, img: img('fugazza-portena'), hot: true , ing: ['Cebolla'] }),
+  I('r-jamon', 'rellenas', 'Fugazzeta con jamón', 'La clásica rellena, con jamón cocido.', 33000, { ing: ['Jamón cocido', 'Cebolla'] }),
+  I('r-4quesos', 'rellenas', 'Fugazzeta 4 quesos', '¡Una bomba de queso! Rellena de muzzarella, queso azul, cuartirolo y reggianito. Para los verdaderos fanáticos del queso.', 36000, { veg: true , ing: ['Queso azul', 'Cuartirolo', 'Reggianito'] }),
 
   // Entre panes
   I('s-bondiola', 'entrepanes', 'Bondiola BBQ', 'Pan de pisa tipo panuozzo, bondiola desmechada, barbacoa, ensalada coleslaw, queso dambo.', 20000, { img: img('entrepan') }),

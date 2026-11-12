@@ -24,7 +24,7 @@ const CFG = typeof PISA_CONFIG !== 'undefined' ? PISA_CONFIG : {};
 // localStorage es la copia local que lee toda la app; si hay Firebase configurado,
 // cada registro se escribe también en /pisa/<clave>/<id> y los cambios remotos
 // se vuelcan a localStorage y disparan el mismo refresco que entre pestañas.
-let REMOTE = null, online = false;
+let REMOTE = null, AUTH = null, online = false, authReady = false, remoteFailed = false;
 const loadScript = src => new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
 async function initRemote() {
   const cfg = CFG.firebase;
@@ -33,11 +33,14 @@ async function initRemote() {
     const v = 'https://www.gstatic.com/firebasejs/10.12.2/';
     await loadScript(v + 'firebase-app-compat.js');
     await loadScript(v + 'firebase-database-compat.js');
+    await loadScript(v + 'firebase-auth-compat.js');
     const db = firebase.initializeApp(cfg).database();
+    AUTH = firebase.auth();
+    AUTH.onAuthStateChanged(() => { authReady = true; if (isAdmin()) boot(); });
     REMOTE = db.ref('pisa');
     Object.values(K).forEach(k => REMOTE.child(k).on('value', s => applyRemote(k, s.val())));
     db.ref('.info/connected').on('value', s => { online = !!s.val(); netState(); });
-  } catch { toast('No se pudo conectar con el servidor. Modo local.'); }
+  } catch { remoteFailed = true; if (isAdmin()) boot(); else toast('Sin conexión con el servidor. Revisá internet.'); }
   netState();
 }
 function netState() {
@@ -273,11 +276,20 @@ function pUnit() {
   const i = byId(P.id);
   let u = P.variant === 'ind' && i.ind ? i.ind : i.price;
   if (P.half) { const h = byId(P.half); if (h) u = Math.max(u, h.price); }
-  return u;
+  return u + P.extras.reduce((t, id) => t + (EXTRAS.find(e => e.id === id)?.price || 0), 0);
 }
+// ingredientes que se pueden quitar: los que define el producto (ing) o los que se leen de la descripción
+function ingredients(i) {
+  if (!CUSTOM_CATS.includes(i.cat)) return [];
+  if (Array.isArray(i.ing)) return i.ing;
+  return (i.desc || '').replace(/\.$/, '').split(/,| y | e /).map(t => t.trim())
+    .filter(t => t.length > 1 && t.length <= 32 && t.split(' ').length <= 4)
+    .map(t => t[0].toUpperCase() + t.slice(1));
+}
+const pMods = () => [...P.removed.map(n => 'Sin ' + n.toLowerCase()), ...P.extras.map(id => 'Extra ' + (EXTRAS.find(e => e.id === id)?.name || '').toLowerCase())];
 function openProduct(id) {
   const i = byId(id); if (!i) return;
-  P = { id, variant: 'entera', half: '', qty: 1 };
+  P = { id, variant: 'entera', half: '', qty: 1, removed: [], extras: [] };
   openSheet('product', `
     <div class="p-media">${media(i, 'p-img')}<span class="p-badge">${esc(CAT_ONE[i.cat])}</span></div>
     <div class="p-body">
@@ -291,6 +303,7 @@ function renderPDyn() {
   const i = byId(P.id), box = $('#p-dyn'); if (!i || !box) return;
   const note = $('#p-note')?.value || '';
   const others = MENU.filter(x => x.cat === 'portenas' && x.id !== i.id && x.available);
+  const ings = ingredients(i);
   box.innerHTML = `
     ${i.ind ? `<div class="opt-title">Tamaño</div>
       <div class="opts">
@@ -303,6 +316,11 @@ function renderPDyn() {
         ${others.map(o => `<option value="${o.id}" ${P.half === o.id ? 'selected' : ''}>½ ${esc(o.name)} · ${money(o.price)}</option>`).join('')}
       </select>
       ${P.half ? '<p class="hint">Se toma el valor de la mitad de mayor precio.</p>' : ''}` : ''}
+    ${ings.length ? `<div class="opt-title">Quitar ingredientes</div>
+      <div class="chips">${ings.map(n => `<button class="chipbtn rm ${P.removed.includes(n) ? 'on' : ''}" data-act="p-rm" data-n="${esc(n)}" aria-pressed="${P.removed.includes(n)}">${P.removed.includes(n) ? 'Sin ' : ''}${esc(n)}</button>`).join('')}</div>` : ''}
+    ${CUSTOM_CATS.includes(i.cat) ? `<div class="opt-title">Agregar extras</div>
+      <div class="chips">${EXTRAS.map(e => `<button class="chipbtn ex ${P.extras.includes(e.id) ? 'on' : ''}" data-act="p-ex" data-x="${e.id}" aria-pressed="${P.extras.includes(e.id)}">+ ${esc(e.name)}<small>${e.price ? money(e.price) : ''}</small></button>`).join('')}</div>
+      ${EXTRAS.some(e => !e.price) ? '<p class="hint">El valor de los extras lo confirma el mozo y se suma en la cuenta.</p>' : ''}` : ''}
     <div class="opt-title">Aclaraciones</div>
     <textarea id="p-note" rows="2" maxlength="140" placeholder="Sin cebolla, bien cocida, para compartir…">${esc(note)}</textarea>
     <div class="p-foot">
@@ -312,13 +330,13 @@ function renderPDyn() {
         : '<button class="btn grow" disabled>Agotado por hoy</button>'}
     </div>`;
 }
-function addLine(i, { variant = 'entera', half = '', note = '', qty = 1, unit } = {}) {
+function addLine(i, { variant = 'entera', half = '', note = '', qty = 1, unit, mods = [] } = {}) {
   const h = half ? byId(half) : null;
   const name = h ? `½ ${i.name} + ½ ${h.name}` : i.name;
   const sub = [CAT_ONE[i.cat], i.ind ? (variant === 'ind' ? 'Individual' : 'Entera') : ''].filter(Boolean).join(' · ');
-  const key = [i.id, variant, half, note].join('|');
+  const key = [i.id, variant, half, note, mods.join(',')].join('|');
   const ex = cart.find(l => l.key === key);
-  if (ex) ex.qty += qty; else cart.push({ key, id: i.id, name, sub, note, qty, unit: unit ?? i.price, img: i.img || '' });
+  if (ex) ex.qty += qty; else cart.push({ key, id: i.id, name, sub, note, mods, qty, unit: unit ?? i.price, img: i.img || '' });
   saveCart(); updateBars();
   const bar = $('#cartbar'); bar.classList.remove('bump'); void bar.offsetWidth; bar.classList.add('bump');
   if (navigator.vibrate) navigator.vibrate(12);
@@ -341,7 +359,7 @@ function cartHTML() {
     <h2 class="sh-title">Tu pedido <small>Mesa ${MESA}</small></h2>
     <ul class="lines">${cart.map((l, x) => `
       <li>
-        <div class="l-info"><strong>${esc(l.name)}</strong><span>${esc(l.sub)}</span>${l.note ? `<em>“${esc(l.note)}”</em>` : ''}</div>
+        <div class="l-info"><strong>${esc(l.name)}</strong><span>${esc(l.sub)}</span>${(l.mods || []).length ? `<i class="mods">${esc(l.mods.join(' · '))}</i>` : ''}${l.note ? `<em>“${esc(l.note)}”</em>` : ''}</div>
         <div class="stepper sm"><button data-act="c-qty" data-x="${x}" data-d="-1" aria-label="Menos">−</button><b>${l.qty}</b><button data-act="c-qty" data-x="${x}" data-d="1" aria-label="Más">+</button></div>
         <b class="l-price">${money(l.unit * l.qty)}</b>
       </li>`).join('')}</ul>
@@ -375,7 +393,7 @@ function mesaHTML() {
     ${mine.map(o => `<div class="ocard">
       <div class="o-head"><strong>Pedido #${o.n}</strong><span>${hhmm(o.ts)}</span></div>
       ${stepsHTML(o)}
-      <ul class="o-items">${o.items.map(l => `<li><span>${l.qty}× ${esc(l.name)}</span><b>${money(l.unit * l.qty)}</b></li>`).join('')}</ul>
+      <ul class="o-items">${o.items.map(l => `<li><span>${l.qty}× ${esc(l.name)}${(l.mods || []).length ? `<i class="mods">${esc(l.mods.join(' · '))}</i>` : ''}</span><b>${money(l.unit * l.qty)}</b></li>`).join('')}</ul>
     </div>`).join('')}
     <div class="total"><span>Cuenta de la mesa</span><strong>${money(total)}</strong></div>
     <button class="btn primary block" data-act="call" data-type="cuenta">Pedir la cuenta</button>
@@ -474,6 +492,7 @@ function renderAdmin() {
       </nav>
       <span id="netstate" class="net"></span>
       <a class="btn ghost sm" href="./?mesa=1" target="_blank" rel="noopener">Ver app del cliente ↗</a>
+      ${AUTH && AUTH.currentUser ? '<button class="btn ghost sm" data-act="pass-form">Cambiar contraseña</button>' : ''}
       <button class="btn ghost sm" data-act="logout">Salir</button>
     </header>
     <main id="adm-main"></main>
@@ -506,7 +525,7 @@ function orderCard(o) {
   const next = { nuevo: ['preparando', 'Aceptar · al horno'], preparando: ['listo', 'Marcar listo'], listo: ['entregado', 'Entregado en mesa'] }[o.status];
   return `<div class="kcard ${o.status}">
     <div class="k-head"><strong>Mesa ${o.mesa}</strong><span>#${o.n} · ${ago(o.ts)}</span></div>
-    <ul>${o.items.map(l => `<li><b>${l.qty}×</b> ${esc(l.name)} <small>${esc(l.sub)}</small>${l.note ? `<em>${esc(l.note)}</em>` : ''}</li>`).join('')}</ul>
+    <ul>${o.items.map(l => `<li><b>${l.qty}×</b> ${esc(l.name)} <small>${esc(l.sub)}</small>${(l.mods || []).length ? `<i class="mods">${esc(l.mods.join(' · '))}</i>` : ''}${l.note ? `<em>${esc(l.note)}</em>` : ''}</li>`).join('')}</ul>
     ${o.note ? `<p class="k-note">Nota: ${esc(o.note)}</p>` : ''}
     <div class="k-foot"><span>${money(o.total)}</span>${next ? `<button class="btn primary sm" data-act="o-next" data-id="${o.id}" data-s="${next[0]}">${next[1]}</button>` : ''}</div>
   </div>`;
@@ -638,8 +657,10 @@ const ACT = {
   'open-item': t => openProduct(t.dataset.id),
   add: t => { const i = byId(t.dataset.id); if (!i) return; if (hasOptions(i)) return openProduct(i.id); addLine(i); fly(t); toast(`${i.name} agregado`); },
   'p-variant': t => { P.variant = t.dataset.v; renderPDyn(); },
+  'p-rm': t => { const n = t.dataset.n, x = P.removed.indexOf(n); if (x < 0) P.removed.push(n); else P.removed.splice(x, 1); renderPDyn(); },
+  'p-ex': t => { const id = t.dataset.x, x = P.extras.indexOf(id); if (x < 0) P.extras.push(id); else P.extras.splice(x, 1); renderPDyn(); },
   'p-qty': t => { P.qty = Math.max(1, Math.min(20, P.qty + +t.dataset.d)); renderPDyn(); },
-  'p-add': () => { const i = byId(P.id); addLine(i, { variant: P.variant, half: P.half, note: $('#p-note').value.trim(), qty: P.qty, unit: pUnit() }); closeSheet(); toast(`${P.qty}× ${i.name} en tu pedido`, 'ok'); },
+  'p-add': () => { const i = byId(P.id); addLine(i, { variant: P.variant, half: P.half, note: $('#p-note').value.trim(), qty: P.qty, unit: pUnit(), mods: pMods() }); closeSheet(); toast(`${P.qty}× ${i.name} en tu pedido`, 'ok'); },
   cart: () => openSheet('cart', cartHTML(), 'cart'),
   'c-qty': t => { const l = cart[+t.dataset.x]; if (!l) return; l.qty += +t.dataset.d; if (l.qty < 1) cart.splice(+t.dataset.x, 1); saveCart(); updateBars(); setSheet(cartHTML()); },
   'send-order': sendOrder,
@@ -653,8 +674,24 @@ const ACT = {
   'o-next': t => { const os = getOrders(), o = os.find(x => x.id === t.dataset.id); if (o) { o.status = t.dataset.s; saveRec(K.orders, o); renderAdmMain(); } },
   'c-done': t => { const cs = getCalls(), c = cs.find(x => x.id === t.dataset.id); if (c) { c.status = 'atendido'; c.tsDone = Date.now(); saveRec(K.calls, c); renderAdmMain(); } },
   print: () => window.print(),
-  'pin-ok': () => { if ($('#pin').value === String(CFG.adminPin)) { sessionStorage.setItem('pisa_admin', '1'); boot(); } else { toast('Clave incorrecta'); $('#pin').value = ''; $('#pin').focus(); } },
-  logout: () => { sessionStorage.removeItem('pisa_admin'); boot(); },
+  login: async () => {
+    const u = $('#lg-user').value.trim().toLowerCase(), p = $('#lg-pass').value;
+    if (!u || !p) return toast('Completá usuario y contraseña');
+    try { await AUTH.signInWithEmailAndPassword(u.includes('@') ? u : `${u}@${CFG.firebase.authDomain}`, p); }
+    catch (e) { toast(e.code === 'auth/network-request-failed' ? 'Sin conexión. Revisá internet.' : e.code === 'auth/too-many-requests' ? 'Demasiados intentos. Esperá unos minutos.' : 'Usuario o contraseña incorrectos'); $('#lg-pass').value = ''; }
+  },
+  logout: () => { if (AUTH) AUTH.signOut(); else boot(); },
+  'pass-form': () => openSheet('pass', `<div class="pad form"><h2 class="sh-title">Cambiar contraseña</h2>
+    <label>Nueva contraseña (mínimo 8 caracteres)<input id="np1" type="password" autocomplete="new-password"></label>
+    <label>Repetir contraseña<input id="np2" type="password" autocomplete="new-password"></label>
+    <button class="btn primary block" data-act="pass-save">Guardar</button></div>`, 'modal'),
+  'pass-save': async () => {
+    const a = $('#np1').value, b = $('#np2').value;
+    if (a.length < 8) return toast('Usá al menos 8 caracteres');
+    if (a !== b) return toast('Las contraseñas no coinciden');
+    try { await AUTH.currentUser.updatePassword(a); closeSheet(); toast('Contraseña actualizada', 'ok'); }
+    catch (e) { toast(e.code === 'auth/requires-recent-login' ? 'Por seguridad, salí, volvé a entrar y probá de nuevo.' : 'No se pudo cambiar la contraseña'); }
+  },
   'sim-order': () => simulate('order'),
   'sim-call': () => simulate('call'),
   'close-mesa': t => { const m = +t.dataset.m; if (!confirm(`¿Cobrar y cerrar la mesa ${m}?`)) return; getOrders().filter(o => o.mesa === m && !o.paid).forEach(o => saveRec(K.orders, { ...o, paid: true, status: 'entregado' })); getCalls().filter(c => c.mesa === m && c.status === 'pendiente').forEach(c => saveRec(K.calls, { ...c, status: 'atendido', tsDone: Date.now() })); renderAdmMain(); },
@@ -708,7 +745,7 @@ function onExternalChange(key, oldValue, newValue) {
 window.addEventListener('storage', e => {
   if (e.key && Object.values(K).includes(e.key)) onExternalChange(e.key, e.oldValue, e.newValue);
 });
-document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'pin') ACT['pin-ok'](); });
+document.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.target.id === 'lg-pass' || e.target.id === 'lg-user')) ACT.login(); });
 setInterval(() => { if (isAdmin() && admTab === 'live' && currentSheet === null) renderAdmMain(); }, 30000);
 
 function boot() {
@@ -717,12 +754,19 @@ function boot() {
   document.title = isAdmin() ? 'Pisa · Gestión' : 'Pisa · Carta y pedidos';
   MENU = getMenu();
   if (!isAdmin()) { renderClient(); snapshot(); }
-  else if (CFG.adminPin && sessionStorage.getItem('pisa_admin') !== '1') {
-    $('#app').innerHTML = `<div class="pinbox"><img src="img/logo.jpg" alt=""><h1 class="logo">Pisa</h1><p>Panel de gestión</p>
-      <input id="pin" type="password" inputmode="numeric" autocomplete="off" placeholder="Clave" aria-label="Clave del panel">
-      <button class="btn primary block" data-act="pin-ok">Entrar</button><a class="hint" href="./">Volver a la carta</a></div>`;
-    $('#pin').focus();
-  } else renderAdmin();
+  else if (!(CFG.firebase && CFG.firebase.databaseURL)) renderAdmin(); // modo local, sin servidor
+  else if (AUTH && AUTH.currentUser) renderAdmin();
+  else {
+    const head = '<div class="pinbox"><img src="img/logo.jpg" alt=""><h1 class="logo">Pisa</h1><p>Panel de gestión</p>';
+    if (remoteFailed) $('#app').innerHTML = head + '<p class="warn">Sin conexión con el servidor. Revisá internet y recargá la página.</p></div>';
+    else if (!authReady) $('#app').innerHTML = head + '<p class="hint">Conectando…</p></div>';
+    else {
+      $('#app').innerHTML = head + `<input id="lg-user" type="text" autocomplete="username" autocapitalize="none" placeholder="Usuario" aria-label="Usuario">
+        <input id="lg-pass" type="password" autocomplete="current-password" placeholder="Contraseña" aria-label="Contraseña">
+        <button class="btn primary block" data-act="login">Entrar</button><a class="hint" href="./">Volver a la carta</a></div>`;
+      $('#lg-user').focus();
+    }
+  }
   netState();
   window.scrollTo(0, 0);
 }

@@ -291,7 +291,7 @@ body.admin #sheet.open { transform: translate(-50%, -50%); opacity: 1; pointer-e
 /* ── clave del panel, estado de conexión y códigos QR */
 .pinbox { min-height: 100dvh; display: grid; place-content: center; justify-items: center; gap: 14px; padding: 24px; text-align: center; width: min(100%, 340px); margin: 0 auto; }
 .pinbox img { width: 110px; border-radius: 50%; } .pinbox p { color: var(--muted); }
-.pinbox input { width: 100%; height: 56px; text-align: center; font-size: 24px; letter-spacing: .4em; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; outline: 0; }
+.pinbox input { width: 100%; height: 54px; padding: 0 16px; font-size: 17px; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; outline: 0; }
 .pinbox input:focus { border-color: var(--amber); }
 .net { font-size: 13px; color: var(--muted); display: inline-flex; align-items: center; gap: 7px; }
 .net::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
@@ -306,3 +306,13 @@ body.admin #sheet.open { transform: translate(-50%, -50%); opacity: 1; pointer-e
   body, body.admin { background: #fff; } .adm-top, .no-print, #toasts, #backdrop, #sheet { display: none !important; }
   #adm-main { padding: 0; } .qrgrid { grid-template-columns: repeat(3, 1fr); gap: 10mm; } .qrcard { border: 1px solid #ccc; }
 }
+
+/* ── quitar ingredientes / extras */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chipbtn { min-height: 40px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); font-size: 14.5px; display: inline-flex; align-items: center; gap: 8px; transition: .2s var(--ease); }
+.chipbtn small { color: var(--muted); font-variant-numeric: tabular-nums; }
+.chipbtn:active { transform: scale(.95); }
+.chipbtn.rm.on { border-color: var(--red); background: rgba(224, 40, 43, .14); color: #ff8f91; text-decoration: line-through; text-decoration-thickness: 1px; }
+.chipbtn.ex.on { border-color: var(--green); background: rgba(134, 179, 106, .16); color: #b9dba3; }
+.mods { display: block; font-style: normal; font-size: 13px; color: #ff9a6b; font-weight: 500; }
+.kcard .mods { font-size: 14px; font-weight: 600; }
